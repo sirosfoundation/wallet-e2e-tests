@@ -12,7 +12,7 @@ The `wallet-e2e-tests` repository provides a reusable GitHub Actions workflow th
 
 ## Quick Start
 
-### For wallet-frontend repository
+### For wallet-frontend repository (or fork)
 
 Create `.github/workflows/e2e.yml`:
 
@@ -31,10 +31,12 @@ jobs:
     with:
       # Test this PR/commit against known-good backend versions
       frontend-ref: ${{ github.sha }}
+      # Use this repo (works for forks too)
+      frontend-repo: ${{ github.server_url }}/${{ github.repository }}.git
       backend-refs: '["main", "v1.0.0"]'
 ```
 
-### For go-wallet-backend repository
+### For go-wallet-backend repository (or fork)
 
 Create `.github/workflows/e2e.yml`:
 
@@ -53,6 +55,8 @@ jobs:
     with:
       # Test this PR/commit against known-good frontend versions
       backend-ref: ${{ github.sha }}
+      # Use this repo (works for forks too)
+      backend-repo: ${{ github.server_url }}/${{ github.repository }}.git
       frontend-refs: '["master", "v1.0.0"]'
 ```
 

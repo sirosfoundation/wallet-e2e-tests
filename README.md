@@ -26,25 +26,31 @@ npm test
 
 ## CI/CD Integration
 
-Use the reusable workflow in your repository:
+Use the reusable workflow in your repository (works with forks):
 
-**For wallet-frontend:**
+**Default repositories:**
+- Frontend: `https://github.com/wwWallet/wallet-frontend.git`
+- Backend: `https://github.com/sirosfoundation/go-wallet-backend.git`
+
+**For wallet-frontend (or fork):**
 ```yaml
 jobs:
   e2e:
     uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
     with:
       frontend-ref: ${{ github.sha }}
+      frontend-repo: ${{ github.server_url }}/${{ github.repository }}.git
       backend-refs: '["main", "v1.0.0"]'
 ```
 
-**For go-wallet-backend:**
+**For go-wallet-backend (or fork):**
 ```yaml
 jobs:
   e2e:
     uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
     with:
       backend-ref: ${{ github.sha }}
+      backend-repo: ${{ github.server_url }}/${{ github.repository }}.git
       frontend-refs: '["master", "v1.0.0"]'
 ```
 

@@ -3,16 +3,22 @@
 # This workflow tests wallet-frontend against go-wallet-backend.
 # It can be called from either repository to ensure compatibility.
 #
-# Usage from wallet-frontend:
+# Default repositories:
+#   Frontend: https://github.com/wwWallet/wallet-frontend.git
+#   Backend:  https://github.com/sirosfoundation/go-wallet-backend.git
+#
+# Usage from wallet-frontend (or fork):
 #   uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
 #   with:
 #     frontend-ref: ${{ github.sha }}
+#     frontend-repo: ${{ github.server_url }}/${{ github.repository }}.git
 #     backend-refs: '["main", "v1.0.0"]'
 #
-# Usage from go-wallet-backend:
+# Usage from go-wallet-backend (or fork):
 #   uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
 #   with:
 #     backend-ref: ${{ github.sha }}
+#     backend-repo: ${{ github.server_url }}/${{ github.repository }}.git
 #     frontend-refs: '["master", "v1.0.0"]'
 
 name: E2E Tests
