@@ -9,6 +9,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { WebAuthnHelper, generateTestUsername } from '../../helpers/webauthn';
+import { injectStorageClearing } from '../../helpers/browser-storage';
 
 test.describe('Authenticated User Flows @authenticated', () => {
   let webauthn: WebAuthnHelper;
@@ -16,6 +17,7 @@ test.describe('Authenticated User Flows @authenticated', () => {
   test.beforeEach(async ({ page }) => {
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
+    await injectStorageClearing(page);
     await webauthn.injectPrfMock();
     await webauthn.addPlatformAuthenticator();
   });

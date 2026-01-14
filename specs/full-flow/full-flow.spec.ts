@@ -9,6 +9,7 @@
 
 import { test, expect, type Page, type Response } from '@playwright/test';
 import { WebAuthnHelper, generateTestUsername, toBase64Url } from '../../helpers/webauthn';
+import { injectStorageClearing } from '../../helpers/browser-storage';
 
 test.describe('Complete Registration Flow @full-flow', () => {
   let webauthn: WebAuthnHelper;
@@ -16,6 +17,7 @@ test.describe('Complete Registration Flow @full-flow', () => {
   test.beforeEach(async ({ page }) => {
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
+    await injectStorageClearing(page);
     // Inject PRF mock BEFORE any navigation - required for wallet keystore
     await webauthn.injectPrfMock();
     await webauthn.addPlatformAuthenticator();

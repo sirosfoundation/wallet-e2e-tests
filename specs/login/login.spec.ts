@@ -9,6 +9,7 @@
 
 import { test, expect, type Page } from '@playwright/test';
 import { WebAuthnHelper, generateTestUsername } from '../../helpers/webauthn';
+import { injectStorageClearing } from '../../helpers/browser-storage';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 
@@ -18,6 +19,7 @@ test.describe('Wallet Login Flow @login', () => {
   test.beforeEach(async ({ page }) => {
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
+    await injectStorageClearing(page);
     // Inject PRF mock BEFORE navigation
     await webauthn.injectPrfMock();
     await webauthn.addPlatformAuthenticator();

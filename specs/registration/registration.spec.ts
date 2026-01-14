@@ -10,6 +10,7 @@
 
 import { test, expect } from '@playwright/test';
 import { WebAuthnHelper, generateTestUsername } from '../../helpers/webauthn';
+import { injectStorageClearing } from '../../helpers/browser-storage';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 
@@ -19,6 +20,9 @@ test.describe('Wallet Registration @registration', () => {
   test.beforeEach(async ({ page }) => {
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
+
+    // Clear browser storage before each test to ensure clean state
+    await injectStorageClearing(page);
 
     // Inject PRF mock BEFORE any navigation - this patches WebAuthn APIs
     await webauthn.injectPrfMock();
