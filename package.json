@@ -1,0 +1,24 @@
+{
+  "name": "wallet-e2e-tests",
+  "version": "1.0.0",
+  "description": "End-to-end tests for wallet-frontend and go-wallet-backend with WebAuthn PRF support",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test",
+    "test:headed": "playwright test --headed",
+    "test:debug": "playwright test --debug",
+    "test:ui": "playwright test --ui",
+    "test:trace": "playwright test --trace on",
+    "test:prf": "playwright test --grep '@prf'",
+    "test:registration": "playwright test --grep '@registration'",
+    "test:login": "playwright test --grep '@login'",
+    "test:matrix": "./scripts/run-matrix.sh"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.52.0",
+    "typescript": "^5.1.6"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

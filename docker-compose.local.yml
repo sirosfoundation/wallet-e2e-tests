@@ -1,0 +1,19 @@
+# Docker Compose override for local development builds
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.local.yml up --build
+
+version: '3.8'
+
+services:
+  wallet-backend:
+    build:
+      context: ${BACKEND_PATH:-../go-wallet-backend}
+      dockerfile: Dockerfile
+    image: wallet-backend-local:latest
+
+  wallet-frontend:
+    build:
+      context: ${FRONTEND_PATH:-../wallet-frontend}
+      dockerfile: Dockerfile
+    image: wallet-frontend-local:latest
