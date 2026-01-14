@@ -189,7 +189,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: wallet-frontend
-        run: npm install
+        run: npm install --legacy-peer-deps
 
       - name: Build backend
         working-directory: go-wallet-backend
