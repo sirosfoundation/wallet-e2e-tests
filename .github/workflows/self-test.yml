@@ -1,0 +1,16 @@
+# Self-test: Run E2E tests on push/PR to this repository
+
+name: Self Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e-tests:
+    uses: ./.github/workflows/e2e-tests.yml
+    with:
+      frontend-ref: 'master'
+      backend-ref: 'main'

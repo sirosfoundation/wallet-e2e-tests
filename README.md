@@ -1,61 +1,90 @@
 # Wallet E2E Tests
 
-End-to-end tests for the wallet stack (wallet-frontend + go-wallet-backend) with WebAuthn PRF support.
+End-to-end tests for the wallet stack (`wallet-frontend` + `go-wallet-backend`) with WebAuthn PRF support.
+
+[![E2E Tests](https://github.com/sirosfoundation/wallet-e2e-tests/actions/workflows/self-test.yml/badge.svg)](https://github.com/sirosfoundation/wallet-e2e-tests/actions/workflows/self-test.yml)
 
 ## Overview
 
-This repository contains E2E tests that verify the integration between wallet-frontend and go-wallet-backend. The tests use Playwright with Chrome DevTools Protocol (CDP) to create virtual WebAuthn authenticators, and include a PRF mock that provides actual HMAC-SHA256 PRF outputs required by the wallet's keystore.
+This repository provides:
 
-## Key Features
-
-- **PRF Mock**: Works around Chrome's CDP limitation where virtual authenticators report PRF support but return empty results
-- **Virtual Authenticator**: Uses CDP to create platform and security key authenticators
-- **Version Matrix Testing**: Test different combinations of frontend/backend versions
-- **Docker Support**: Run tests in isolated containers
+1. **E2E test suite** for wallet-frontend and go-wallet-backend integration
+2. **Reusable GitHub Action** for CI/CD pipelines
+3. **PRF mock** that works around Chrome CDP limitations
+4. **Version matrix testing** for compatibility verification
 
 ## Quick Start
 
-### Prerequisites
-
-- Node.js 18+
-- Go 1.21+ (for running backend locally)
-- Docker and Docker Compose (for containerized testing)
-
-### Installation
-
 ```bash
+# Install dependencies
 npm install
 npx playwright install chromium
-```
 
-### Running Tests
-
-#### Option 1: Against running servers
-
-If you already have wallet-frontend and go-wallet-backend running:
-
-```bash
-FRONTEND_URL=http://localhost:3000 BACKEND_URL=http://localhost:8080 npm test
-```
-
-#### Option 2: Auto-start servers
-
-```bash
-START_SERVERS=true \
-FRONTEND_PATH=../wallet-frontend \
-BACKEND_PATH=../go-wallet-backend \
+# Run tests (servers must be running)
 npm test
 ```
 
-#### Option 3: Using setup script
+## CI/CD Integration
+
+Use the reusable workflow in your repository:
+
+**For wallet-frontend:**
+```yaml
+jobs:
+  e2e:
+    uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
+    with:
+      frontend-ref: ${{ github.sha }}
+      backend-refs: '["main", "v1.0.0"]'
+```
+
+**For go-wallet-backend:**
+```yaml
+jobs:
+  e2e:
+    uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
+    with:
+      backend-ref: ${{ github.sha }}
+      frontend-refs: '["master", "v1.0.0"]'
+```
+
+See [docs/CI.md](docs/CI.md) for detailed CI integration documentation.
+
+## Local Development
+
+### Option 1: Manual server setup
+
+Start servers manually and run tests:
 
 ```bash
-./scripts/setup-local.sh --frontend-path ../wallet-frontend --backend-path ../go-wallet-backend
-# In another terminal:
+# Terminal 1: Start backend
+cd ../go-wallet-backend
+RP_ORIGIN=http://localhost:3000 go run ./cmd/server/...
+
+# Terminal 2: Start frontend  
+cd ../wallet-frontend
+VITE_WALLET_BACKEND_URL=http://localhost:8080 npm run dev
+
+# Terminal 3: Run tests
+cd wallet-e2e-tests
 npm test
 ```
 
-#### Option 4: Using Docker
+### Option 2: Makefile automation
+
+```bash
+# Clone and test specific git refs
+make setup-git FRONTEND_REF=master BACKEND_REF=main
+make test
+make teardown
+
+# Or test from existing local checkouts
+make setup-local FRONTEND_PATH=../wallet-frontend BACKEND_PATH=../go-wallet-backend
+make test
+make teardown
+```
+
+### Option 3: Docker
 
 ```bash
 docker-compose up -d
@@ -63,124 +92,96 @@ npm test
 docker-compose down
 ```
 
-### Running Specific Tests
-
-```bash
-# PRF mock tests only
-npm run test:prf
-
-# Registration tests only
-npm run test:registration
-
-# Login tests only
-npm run test:login
-
-# Interactive UI mode
-npm run test:ui
-
-# With browser visible
-npm run test:headed
-```
-
 ## Test Structure
 
 ```
 wallet-e2e-tests/
+├── .github/workflows/     # GitHub Actions
+│   ├── e2e-tests.yml      # Reusable workflow
+│   └── self-test.yml      # Self-test on push
+├── docs/
+│   └── CI.md              # CI integration guide
 ├── helpers/
-│   └── webauthn.ts       # WebAuthn helper with PRF mock
+│   └── webauthn.ts        # WebAuthn/PRF helper
 ├── specs/
-│   ├── prf/              # PRF mock tests
-│   ├── registration/     # Registration flow tests
-│   └── login/            # Login flow tests
+│   ├── api/               # API compatibility tests
+│   ├── authenticated/     # Authenticated flow tests
+│   ├── diagnostics/       # Diagnostic tests
+│   ├── full-flow/         # Complete flow tests
+│   ├── login/             # Login tests
+│   ├── prf/               # PRF mock tests
+│   └── registration/      # Registration tests
 ├── scripts/
-│   ├── run-matrix.sh     # Version matrix testing
-│   └── setup-local.sh    # Local development setup
-├── docker-compose.yml    # Docker configuration
-└── playwright.config.ts  # Playwright configuration
+│   ├── run-matrix.sh      # Version matrix testing
+│   └── setup-local.sh     # Local dev setup
+├── docker-compose.yml     # Docker configuration
+├── Makefile               # Build automation
+└── playwright.config.ts   # Playwright config
+```
+
+## Test Tags
+
+Run specific test categories:
+
+```bash
+npm run test:prf          # @prf - PRF extension tests
+npm run test:registration # @registration - Registration flows
+npm run test:login        # @login - Login flows
+```
+
+Or use Playwright grep:
+
+```bash
+npx playwright test --grep "@full-flow"
 ```
 
 ## PRF Mock
 
-Chrome's CDP virtual authenticator reports `hasPrf=true` but doesn't actually compute PRF outputs. The `WebAuthnHelper.injectPrfMock()` method patches the WebAuthn API to compute real HMAC-SHA256 based PRF outputs:
+Chrome's CDP virtual authenticator reports `hasPrf=true` but returns empty PRF results. The PRF mock patches the WebAuthn API to compute actual HMAC-SHA256 outputs:
 
 ```typescript
-// In your test setup
 test.beforeEach(async ({ page }) => {
   webauthn = new WebAuthnHelper(page);
   await webauthn.initialize();
-  await webauthn.injectPrfMock();  // CRITICAL: Must be before navigation
+  await webauthn.injectPrfMock();  // CRITICAL: Before navigation
   await webauthn.addPlatformAuthenticator();
 });
 ```
-
-The mock:
-- Generates a deterministic PRF seed for each credential
-- Computes HMAC-SHA256(seed, salt) for PRF outputs
-- Produces same output for same credential+salt (deterministic)
-- Produces different output for different salts
-
-## Version Matrix Testing
-
-Test different combinations of frontend and backend versions:
-
-```bash
-./scripts/run-matrix.sh \
-  --frontend-versions "v1.0.0 v1.1.0 latest" \
-  --backend-versions "v1.0.0 v1.1.0 latest"
-```
-
-This generates a compatibility matrix and saves results to `test-results/matrix-*/`.
 
 ## Environment Variables
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FRONTEND_URL` | `http://localhost:3000` | URL of wallet-frontend |
-| `BACKEND_URL` | `http://localhost:8080` | URL of go-wallet-backend |
-| `START_SERVERS` | `false` | Auto-start servers |
-| `FRONTEND_PATH` | `../wallet-frontend` | Path to frontend repo |
-| `BACKEND_PATH` | `../go-wallet-backend` | Path to backend repo |
-| `FRONTEND_VERSION` | `latest` | Docker image version |
-| `BACKEND_VERSION` | `latest` | Docker image version |
+| `FRONTEND_URL` | `http://localhost:3000` | Frontend URL |
+| `BACKEND_URL` | `http://localhost:8080` | Backend URL |
+| `FRONTEND_PATH` | `../wallet-frontend` | Frontend repo path |
+| `BACKEND_PATH` | `../go-wallet-backend` | Backend repo path |
+| `FRONTEND_REF` | `master` | Frontend git ref |
+| `BACKEND_REF` | `main` | Backend git ref |
 
 ## Backend Configuration
 
-The backend requires specific configuration for WebAuthn to work correctly:
+Required environment variables for go-wallet-backend:
 
 ```bash
-WALLET_JWT_SECRET=test-secret-for-e2e-testing-minimum-32-chars
-WALLET_SERVER_WEBAUTHN_DISPLAY_NAME=Wallet E2E Test
+RP_ORIGIN=http://localhost:3000  # Must match frontend URL!
 WALLET_SERVER_RP_ID=localhost
-WALLET_SERVER_RP_ORIGIN=http://localhost:3000  # Must match frontend origin!
-WALLET_SERVER_ENABLE_CREDENTIAL_REGISTRATION=true
-WALLET_SERVER_REQUIRE_USER_VERIFICATION=true
-WALLET_SERVER_TIMEOUT=60000
-WALLET_SERVER_ATTESTATION=none
+WALLET_JWT_SECRET=test-secret-for-e2e-testing-minimum-32-chars
 ```
 
 ## Troubleshooting
 
 ### PRF outputs are empty
 
-Make sure to call `injectPrfMock()` **before** any page navigation:
-
-```typescript
-await webauthn.initialize();
-await webauthn.injectPrfMock();  // Must be BEFORE page.goto()
-await webauthn.addPlatformAuthenticator();
-await page.goto('/');  // Navigation comes after
-```
+Call `injectPrfMock()` **before** any page navigation.
 
 ### WebAuthn ceremony fails
 
-Check that:
-1. `WALLET_SERVER_RP_ORIGIN` matches the frontend URL exactly
-2. `WALLET_SERVER_RP_ID` matches the hostname (e.g., `localhost`)
-3. Virtual authenticator is added before triggering WebAuthn
+Ensure `RP_ORIGIN` matches the frontend URL exactly.
 
 ### Tests timeout
 
-WebAuthn tests require serial execution and need extra time. The config sets:
+WebAuthn tests need extra time. The config uses:
 - `fullyParallel: false`
 - `workers: 1`
 - `timeout: 60000`

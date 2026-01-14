@@ -1,0 +1,287 @@
+# Wallet E2E Tests - Reusable Workflow
+#
+# This workflow tests wallet-frontend against go-wallet-backend.
+# It can be called from either repository to ensure compatibility.
+#
+# Usage from wallet-frontend:
+#   uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
+#   with:
+#     frontend-ref: ${{ github.sha }}
+#     backend-refs: '["main", "v1.0.0"]'
+#
+# Usage from go-wallet-backend:
+#   uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
+#   with:
+#     backend-ref: ${{ github.sha }}
+#     frontend-refs: '["master", "v1.0.0"]'
+
+name: E2E Tests
+
+on:
+  workflow_call:
+    inputs:
+      # Single ref for the component being tested (from the calling repo)
+      frontend-ref:
+        description: 'Git ref for wallet-frontend (branch, tag, or SHA)'
+        type: string
+        required: false
+        default: ''
+      backend-ref:
+        description: 'Git ref for go-wallet-backend (branch, tag, or SHA)'
+        type: string
+        required: false
+        default: ''
+      # Multiple refs to test against (JSON array)
+      frontend-refs:
+        description: 'JSON array of frontend refs to test against'
+        type: string
+        required: false
+        default: '[]'
+      backend-refs:
+        description: 'JSON array of backend refs to test against'
+        type: string
+        required: false
+        default: '[]'
+      # Repository URLs (for forks or custom repos)
+      frontend-repo:
+        description: 'Git URL for wallet-frontend'
+        type: string
+        required: false
+        default: 'https://github.com/wwWallet/wallet-frontend.git'
+      backend-repo:
+        description: 'Git URL for go-wallet-backend'
+        type: string
+        required: false
+        default: 'https://github.com/sirosfoundation/go-wallet-backend.git'
+      # Test configuration
+      test-filter:
+        description: 'Playwright test filter (e.g., "@prf" or "@registration")'
+        type: string
+        required: false
+        default: ''
+      timeout-minutes:
+        description: 'Job timeout in minutes'
+        type: number
+        required: false
+        default: 30
+    outputs:
+      result:
+        description: 'Test result summary'
+        value: ${{ jobs.summarize.outputs.summary }}
+
+  # Allow manual triggering from the Actions tab
+  workflow_dispatch:
+    inputs:
+      frontend-ref:
+        description: 'Frontend ref (branch/tag/SHA)'
+        type: string
+        default: 'master'
+      backend-ref:
+        description: 'Backend ref (branch/tag/SHA)'
+        type: string
+        default: 'main'
+      frontend-repo:
+        description: 'Frontend repository URL'
+        type: string
+        default: 'https://github.com/wwWallet/wallet-frontend.git'
+      backend-repo:
+        description: 'Backend repository URL'
+        type: string
+        default: 'https://github.com/sirosfoundation/go-wallet-backend.git'
+      test-filter:
+        description: 'Test filter (optional)'
+        type: string
+        default: ''
+
+jobs:
+  # Build the test matrix from inputs
+  prepare-matrix:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+    steps:
+      - name: Build test matrix
+        id: build-matrix
+        shell: bash
+        run: |
+          # Parse inputs
+          FRONTEND_REF="${{ inputs.frontend-ref }}"
+          BACKEND_REF="${{ inputs.backend-ref }}"
+          FRONTEND_REFS='${{ inputs.frontend-refs }}'
+          BACKEND_REFS='${{ inputs.backend-refs }}'
+          
+          # Default refs if none specified
+          if [ -z "$FRONTEND_REF" ] && [ "$FRONTEND_REFS" = "[]" ]; then
+            FRONTEND_REF="master"
+          fi
+          if [ -z "$BACKEND_REF" ] && [ "$BACKEND_REFS" = "[]" ]; then
+            BACKEND_REF="main"
+          fi
+          
+          # Build matrix JSON
+          # If a single ref is specified, use the array refs for the other component
+          if [ -n "$FRONTEND_REF" ] && [ "$BACKEND_REFS" != "[]" ]; then
+            # Testing frontend against multiple backends
+            MATRIX=$(echo "$BACKEND_REFS" | jq -c --arg f "$FRONTEND_REF" '{include: [.[] | {frontend: $f, backend: .}]}')
+          elif [ -n "$BACKEND_REF" ] && [ "$FRONTEND_REFS" != "[]" ]; then
+            # Testing backend against multiple frontends
+            MATRIX=$(echo "$FRONTEND_REFS" | jq -c --arg b "$BACKEND_REF" '{include: [.[] | {frontend: ., backend: $b}]}')
+          else
+            # Single combination
+            FRONTEND_REF="${FRONTEND_REF:-master}"
+            BACKEND_REF="${BACKEND_REF:-main}"
+            MATRIX=$(jq -n -c --arg f "$FRONTEND_REF" --arg b "$BACKEND_REF" '{include: [{frontend: $f, backend: $b}]}')
+          fi
+          
+          echo "matrix=$MATRIX" >> $GITHUB_OUTPUT
+          echo "Test matrix: $MATRIX"
+
+  # Run E2E tests for each matrix combination
+  test:
+    needs: prepare-matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.timeout-minutes || 30 }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+    
+    steps:
+      - name: Checkout E2E tests
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Install test dependencies
+        run: |
+          npm ci
+          npx playwright install chromium --with-deps
+
+      - name: Clone wallet-frontend
+        run: |
+          git clone --depth 1 ${{ inputs.frontend-repo || 'https://github.com/wwWallet/wallet-frontend.git' }} wallet-frontend
+          cd wallet-frontend
+          git fetch --depth 1 origin ${{ matrix.frontend }}
+          git checkout FETCH_HEAD
+          echo "Frontend SHA: $(git rev-parse HEAD)"
+
+      - name: Clone go-wallet-backend
+        run: |
+          git clone --depth 1 ${{ inputs.backend-repo || 'https://github.com/sirosfoundation/go-wallet-backend.git' }} go-wallet-backend
+          cd go-wallet-backend
+          git fetch --depth 1 origin ${{ matrix.backend }}
+          git checkout FETCH_HEAD
+          echo "Backend SHA: $(git rev-parse HEAD)"
+
+      - name: Install frontend dependencies
+        working-directory: wallet-frontend
+        run: npm ci
+
+      - name: Build backend
+        working-directory: go-wallet-backend
+        run: go build -v ./cmd/server/...
+
+      - name: Start backend
+        working-directory: go-wallet-backend
+        run: |
+          go run ./cmd/server/... &
+          echo "Waiting for backend to be ready..."
+          for i in {1..30}; do
+            if curl -sf http://localhost:8080/status > /dev/null 2>&1; then
+              echo "Backend is ready!"
+              break
+            fi
+            sleep 1
+          done
+        env:
+          WALLET_JWT_SECRET: test-secret-for-e2e-testing-minimum-32-chars
+          WALLET_SERVER_WEBAUTHN_DISPLAY_NAME: Wallet E2E Test
+          WALLET_SERVER_RP_ID: localhost
+          RP_ORIGIN: http://localhost:3000
+          WALLET_SERVER_ENABLE_CREDENTIAL_REGISTRATION: "true"
+          WALLET_SERVER_REQUIRE_USER_VERIFICATION: "true"
+          WALLET_SERVER_TIMEOUT: "60000"
+          WALLET_SERVER_ATTESTATION: none
+          WALLET_SERVER_PORT: "8080"
+          WALLET_LOG_LEVEL: info
+
+      - name: Start frontend
+        working-directory: wallet-frontend
+        run: |
+          npm run dev -- --host &
+          echo "Waiting for frontend to be ready..."
+          for i in {1..60}; do
+            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
+              echo "Frontend is ready!"
+              break
+            fi
+            sleep 1
+          done
+        env:
+          VITE_WALLET_BACKEND_URL: http://localhost:8080
+          VITE_WEBAUTHN_RPID: localhost
+          VITE_LOGIN_WITH_PASSWORD: "false"
+
+      - name: Run E2E tests
+        run: |
+          FILTER="${{ inputs.test-filter }}"
+          if [ -n "$FILTER" ]; then
+            npx playwright test --grep "$FILTER"
+          else
+            npx playwright test
+          fi
+        env:
+          FRONTEND_URL: http://localhost:3000
+          BACKEND_URL: http://localhost:8080
+          CI: true
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.frontend }}-${{ matrix.backend }}
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+      - name: Upload test report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ matrix.frontend }}-${{ matrix.backend }}
+          path: playwright-report/
+          retention-days: 30
+
+  # Summarize results
+  summarize:
+    needs: test
+    runs-on: ubuntu-latest
+    if: always()
+    outputs:
+      summary: ${{ steps.summary.outputs.summary }}
+    steps:
+      - name: Generate summary
+        id: summary
+        run: |
+          echo "## E2E Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Frontend | Backend | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|---------|--------|" >> $GITHUB_STEP_SUMMARY
+          
+          # The actual results would come from the matrix jobs
+          if [ "${{ needs.test.result }}" = "success" ]; then
+            echo "summary=All tests passed" >> $GITHUB_OUTPUT
+            echo "✅ All tests passed" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "summary=Some tests failed" >> $GITHUB_OUTPUT
+            echo "❌ Some tests failed" >> $GITHUB_STEP_SUMMARY
+          fi
