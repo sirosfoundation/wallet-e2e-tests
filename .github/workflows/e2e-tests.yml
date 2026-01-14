@@ -235,6 +235,7 @@ jobs:
           VITE_WALLET_BACKEND_URL: http://localhost:8080
           VITE_WEBAUTHN_RPID: localhost
           VITE_LOGIN_WITH_PASSWORD: "false"
+          VITE_STATIC_NAME: wallet-e2e-test
 
       - name: Run E2E tests
         run: |
