@@ -24,3 +24,6 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Git workspace (cloned repos for testing)
+.workspace/
