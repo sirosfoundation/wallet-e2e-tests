@@ -198,7 +198,8 @@ jobs:
       - name: Start backend
         working-directory: go-wallet-backend
         run: |
-          go run ./cmd/server/... &
+          go run ./cmd/server/... > /tmp/backend.log 2>&1 &
+          echo $! > /tmp/backend.pid
           echo "Waiting for backend to be ready..."
           for i in {1..30}; do
             if curl -sf http://localhost:8080/status > /dev/null 2>&1; then
@@ -207,6 +208,9 @@ jobs:
             fi
             sleep 1
           done
+          # Show initial backend logs
+          echo "=== Backend startup logs ==="
+          cat /tmp/backend.log || true
         env:
           WALLET_JWT_SECRET: test-secret-for-e2e-testing-minimum-32-chars
           WALLET_SERVER_RP_NAME: Wallet E2E Test
@@ -245,6 +249,12 @@ jobs:
           FRONTEND_URL: http://localhost:3000
           BACKEND_URL: http://localhost:8080
           CI: true
+
+      - name: Show backend logs
+        if: always()
+        run: |
+          echo "=== Backend logs ==="
+          cat /tmp/backend.log || echo "No backend logs found"
 
       - name: Upload test results
         if: always()
