@@ -256,11 +256,20 @@ jobs:
           echo "=== Backend logs ==="
           cat /tmp/backend.log || echo "No backend logs found"
 
+      - name: Sanitize artifact names
+        id: sanitize
+        run: |
+          # Replace slashes with dashes for artifact names
+          FRONTEND_SAFE=$(echo "${{ matrix.frontend }}" | tr '/' '-')
+          BACKEND_SAFE=$(echo "${{ matrix.backend }}" | tr '/' '-')
+          echo "frontend=$FRONTEND_SAFE" >> $GITHUB_OUTPUT
+          echo "backend=$BACKEND_SAFE" >> $GITHUB_OUTPUT
+
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: test-results-${{ matrix.frontend }}-${{ matrix.backend }}
+          name: test-results-${{ steps.sanitize.outputs.frontend }}-${{ steps.sanitize.outputs.backend }}
           path: |
             playwright-report/
             test-results/
@@ -270,7 +279,7 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.frontend }}-${{ matrix.backend }}
+          name: playwright-report-${{ steps.sanitize.outputs.frontend }}-${{ steps.sanitize.outputs.backend }}
           path: playwright-report/
           retention-days: 30
 
