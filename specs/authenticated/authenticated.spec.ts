@@ -14,9 +14,25 @@ import { injectStorageClearing } from '../../helpers/browser-storage';
 test.describe('Authenticated User Flows @authenticated', () => {
   let webauthn: WebAuthnHelper;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
+
+    // Clear cookies at context level
+    await context.clearCookies();
+
+    // Navigate to blank page and clear storage first (before app loads)
+    await page.goto('about:blank');
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.clear();
+      if ('indexedDB' in window) {
+        indexedDB.databases().then(dbs => {
+          dbs.forEach(db => db.name && indexedDB.deleteDatabase(db.name));
+        }).catch(() => {});
+      }
+    });
+
     await injectStorageClearing(page);
     await webauthn.injectPrfMock();
     await webauthn.addPlatformAuthenticator();

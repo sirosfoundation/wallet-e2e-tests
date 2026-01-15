@@ -10,21 +10,35 @@
 
 import { test, expect } from '@playwright/test';
 import { WebAuthnHelper, generateTestUsername } from '../../helpers/webauthn';
-import { injectStorageClearing } from '../../helpers/browser-storage';
+import { injectStorageClearing, clearBrowserStorage } from '../../helpers/browser-storage';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 
 test.describe('Wallet Registration @registration', () => {
   let webauthn: WebAuthnHelper;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async ({ page, context }) => {
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
 
-    // Clear browser storage before each test to ensure clean state
-    await injectStorageClearing(page);
+    // Clear cookies at context level
+    await context.clearCookies();
 
-    // Inject PRF mock BEFORE any navigation - this patches WebAuthn APIs
+    // Navigate to blank page and clear storage first (before app loads)
+    await page.goto('about:blank');
+    await page.evaluate(() => {
+      localStorage.clear();
+      sessionStorage.clear();
+      // IndexedDB clearing
+      if ('indexedDB' in window) {
+        indexedDB.databases().then(dbs => {
+          dbs.forEach(db => db.name && indexedDB.deleteDatabase(db.name));
+        }).catch(() => {});
+      }
+    });
+
+    // Inject scripts that will run on subsequent navigations
+    await injectStorageClearing(page);
     await webauthn.injectPrfMock();
 
     // Add virtual authenticator with PRF support

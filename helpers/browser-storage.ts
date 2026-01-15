@@ -5,7 +5,7 @@
  * IndexedDB) to ensure test isolation.
  */
 
-import type { Page } from '@playwright/test';
+import type { Page, BrowserContext } from '@playwright/test';
 
 /**
  * Inject storage clearing script into page context.
@@ -80,4 +80,33 @@ export async function clearBrowserStorage(page: Page): Promise<void> {
       }).catch(() => resolve());
     });
   });
+}
+
+/**
+ * Navigate to a blank page and clear all storage before navigating to the target.
+ * This ensures a completely clean state.
+ * 
+ * @param page - The Playwright page instance
+ * @param url - The URL to navigate to after clearing storage
+ */
+export async function navigateWithCleanStorage(page: Page, url: string): Promise<void> {
+  // Navigate to about:blank first to ensure we're in a clean state
+  await page.goto('about:blank');
+  
+  // Clear storage on the blank page
+  await page.evaluate(() => {
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+  
+  // Navigate to the target URL
+  await page.goto(url);
+}
+
+/**
+ * Clear browser context storage state.
+ * This clears cookies, localStorage, etc. at the context level.
+ */
+export async function clearContextStorage(context: BrowserContext): Promise<void> {
+  await context.clearCookies();
 }
