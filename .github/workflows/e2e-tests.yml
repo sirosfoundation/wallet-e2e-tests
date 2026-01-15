@@ -154,6 +154,8 @@ jobs:
     steps:
       - name: Checkout E2E tests
         uses: actions/checkout@v4
+        with:
+          repository: sirosfoundation/wallet-e2e-tests
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
