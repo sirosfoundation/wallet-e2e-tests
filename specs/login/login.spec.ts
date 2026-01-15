@@ -23,24 +23,14 @@ test.describe('Wallet Login Flow @login', () => {
     // Clear cookies at context level
     await context.clearCookies();
 
-    // Inject scripts BEFORE navigation
+    // Inject storage clearing script - runs before page scripts on every navigation
     await injectStorageClearing(page);
-    await webauthn.injectPrfMock();
-    await webauthn.addPlatformAuthenticator();
 
-    // Navigate to the app to establish origin, then clear storage
-    await page.goto('/');
-    await page.evaluate(() => {
-      localStorage.clear();
-      sessionStorage.clear();
-      if ('indexedDB' in window) {
-        indexedDB.databases().then(dbs => {
-          dbs.forEach(db => db.name && indexedDB.deleteDatabase(db.name));
-        }).catch(() => {});
-      }
-    });
-    // Reload to get a clean state
-    await page.reload();
+    // Inject PRF mock BEFORE navigation
+    await webauthn.injectPrfMock();
+
+    // Add virtual authenticator
+    await webauthn.addPlatformAuthenticator();
   });
 
   test.afterEach(async () => {

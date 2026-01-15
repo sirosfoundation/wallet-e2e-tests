@@ -110,3 +110,22 @@ export async function navigateWithCleanStorage(page: Page, url: string): Promise
 export async function clearContextStorage(context: BrowserContext): Promise<void> {
   await context.clearCookies();
 }
+
+/**
+ * Dismiss any cached user UI in the wallet-frontend.
+ * The wallet stores cached users in localStorage, and if present, shows a
+ * "Use other Account" button. Click it to get to a clean registration state.
+ *
+ * @param page - The Playwright page object
+ */
+export async function dismissCachedUsers(page: Page): Promise<void> {
+  const useOtherAccount = page.getByRole('button', { name: /use other account/i });
+  try {
+    if (await useOtherAccount.isVisible({ timeout: 1000 })) {
+      await useOtherAccount.click();
+      await page.waitForTimeout(300);
+    }
+  } catch {
+    // No cached users to dismiss
+  }
+}

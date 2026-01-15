@@ -10,7 +10,7 @@
 
 import { test, expect } from '@playwright/test';
 import { WebAuthnHelper, generateTestUsername } from '../../helpers/webauthn';
-import { injectStorageClearing } from '../../helpers/browser-storage';
+import { injectStorageClearing, dismissCachedUsers } from '../../helpers/browser-storage';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 
@@ -24,27 +24,14 @@ test.describe('Wallet Registration @registration', () => {
     // Clear cookies at context level
     await context.clearCookies();
 
-    // Inject scripts that will run on subsequent navigations
+    // Inject storage clearing script - runs before page scripts on every navigation
     await injectStorageClearing(page);
+
+    // Inject PRF mock BEFORE navigation
     await webauthn.injectPrfMock();
 
     // Add virtual authenticator with PRF support
     await webauthn.addPlatformAuthenticator();
-
-    // Navigate to the app to establish origin, then clear storage
-    await page.goto('/');
-    await page.evaluate(() => {
-      localStorage.clear();
-      sessionStorage.clear();
-      // IndexedDB clearing
-      if ('indexedDB' in window) {
-        indexedDB.databases().then(dbs => {
-          dbs.forEach(db => db.name && indexedDB.deleteDatabase(db.name));
-        }).catch(() => {});
-      }
-    });
-    // Reload to get a clean state
-    await page.reload();
   });
 
   test.afterEach(async () => {
@@ -92,8 +79,14 @@ test.describe('Wallet Registration @registration', () => {
   });
 
   test('should complete passkey registration flow', async ({ page }) => {
+    // Generate unique username for this test run
+    const testUsername = generateTestUsername();
+
     await page.goto('/');
     await page.waitForLoadState('networkidle');
+
+    // Dismiss any cached users from previous test runs
+    await dismissCachedUsers(page);
 
     // Track network activity
     const networkLog: { type: string; url: string; status?: number; body?: string }[] = [];
@@ -141,7 +134,7 @@ test.describe('Wallet Registration @registration', () => {
     console.log('[TEST] Has name input:', hasNameInput);
 
     if (hasNameInput) {
-      await nameInput.fill('Test User E2E');
+      await nameInput.fill(testUsername);
     }
 
     // Click "Passkey on this device" to start platform authenticator registration
