@@ -10,7 +10,7 @@
 
 import { test, expect } from '@playwright/test';
 import { WebAuthnHelper, generateTestUsername } from '../../helpers/webauthn';
-import { injectStorageClearing, clearBrowserStorage } from '../../helpers/browser-storage';
+import { injectStorageClearing } from '../../helpers/browser-storage';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 
@@ -24,8 +24,15 @@ test.describe('Wallet Registration @registration', () => {
     // Clear cookies at context level
     await context.clearCookies();
 
-    // Navigate to blank page and clear storage first (before app loads)
-    await page.goto('about:blank');
+    // Inject scripts that will run on subsequent navigations
+    await injectStorageClearing(page);
+    await webauthn.injectPrfMock();
+
+    // Add virtual authenticator with PRF support
+    await webauthn.addPlatformAuthenticator();
+
+    // Navigate to the app to establish origin, then clear storage
+    await page.goto('/');
     await page.evaluate(() => {
       localStorage.clear();
       sessionStorage.clear();
@@ -36,13 +43,8 @@ test.describe('Wallet Registration @registration', () => {
         }).catch(() => {});
       }
     });
-
-    // Inject scripts that will run on subsequent navigations
-    await injectStorageClearing(page);
-    await webauthn.injectPrfMock();
-
-    // Add virtual authenticator with PRF support
-    await webauthn.addPlatformAuthenticator();
+    // Reload to get a clean state
+    await page.reload();
   });
 
   test.afterEach(async () => {

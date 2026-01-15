@@ -21,8 +21,13 @@ test.describe('Authenticated User Flows @authenticated', () => {
     // Clear cookies at context level
     await context.clearCookies();
 
-    // Navigate to blank page and clear storage first (before app loads)
-    await page.goto('about:blank');
+    // Inject storage clearing scripts BEFORE navigating (runs when app loads)
+    await injectStorageClearing(page);
+    await webauthn.injectPrfMock();
+    await webauthn.addPlatformAuthenticator();
+
+    // Navigate to the app to establish origin, then clear storage
+    await page.goto('/');
     await page.evaluate(() => {
       localStorage.clear();
       sessionStorage.clear();
@@ -32,10 +37,8 @@ test.describe('Authenticated User Flows @authenticated', () => {
         }).catch(() => {});
       }
     });
-
-    await injectStorageClearing(page);
-    await webauthn.injectPrfMock();
-    await webauthn.addPlatformAuthenticator();
+    // Reload to get a clean state
+    await page.reload();
   });
 
   test.afterEach(async () => {

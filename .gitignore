@@ -6,6 +6,10 @@ test-results/
 playwright-report/
 playwright/.cache/
 
+# CI artifacts (downloaded from GitHub Actions)
+ci-report/
+ci-results/
+
 # TypeScript build
 dist/
 

@@ -23,8 +23,13 @@ test.describe('Wallet Login Flow @login', () => {
     // Clear cookies at context level
     await context.clearCookies();
 
-    // Navigate to blank page and clear storage first (before app loads)
-    await page.goto('about:blank');
+    // Inject scripts BEFORE navigation
+    await injectStorageClearing(page);
+    await webauthn.injectPrfMock();
+    await webauthn.addPlatformAuthenticator();
+
+    // Navigate to the app to establish origin, then clear storage
+    await page.goto('/');
     await page.evaluate(() => {
       localStorage.clear();
       sessionStorage.clear();
@@ -34,11 +39,8 @@ test.describe('Wallet Login Flow @login', () => {
         }).catch(() => {});
       }
     });
-
-    await injectStorageClearing(page);
-    // Inject PRF mock BEFORE navigation
-    await webauthn.injectPrfMock();
-    await webauthn.addPlatformAuthenticator();
+    // Reload to get a clean state
+    await page.reload();
   });
 
   test.afterEach(async () => {
