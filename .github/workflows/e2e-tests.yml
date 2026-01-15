@@ -85,7 +85,7 @@ on:
       backend-ref:
         description: 'Backend ref (branch/tag/SHA)'
         type: string
-        default: 'feature/multi-tenancy'
+        default: 'main'
       frontend-repo:
         description: 'Frontend repository URL'
         type: string
