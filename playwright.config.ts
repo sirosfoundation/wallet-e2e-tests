@@ -6,6 +6,7 @@ import { defineConfig, devices } from '@playwright/test';
  * Environment Variables:
  * - FRONTEND_URL: URL of the wallet-frontend (default: http://localhost:3000)
  * - BACKEND_URL: URL of the go-wallet-backend (default: http://localhost:8080)
+ * - ADMIN_URL: URL of the go-wallet-backend admin API (default: http://localhost:8081)
  * - START_SERVERS: Set to 'true' to auto-start both servers (default: false)
  * - FRONTEND_PATH: Path to wallet-frontend repo (for auto-start)
  * - BACKEND_PATH: Path to go-wallet-backend repo (for auto-start)
@@ -20,6 +21,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
+const ADMIN_URL = process.env.ADMIN_URL || 'http://localhost:8081';
 const START_SERVERS = process.env.START_SERVERS === 'true';
 const FRONTEND_PATH = process.env.FRONTEND_PATH || '../wallet-frontend';
 const BACKEND_PATH = process.env.BACKEND_PATH || '../go-wallet-backend';
