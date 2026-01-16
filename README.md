@@ -88,7 +88,13 @@ make teardown
 make setup-local FRONTEND_PATH=../wallet-frontend BACKEND_PATH=../go-wallet-backend
 make test
 make teardown
+
+# Quick start (skip npm install if node_modules exists)
+make setup-local-quick FRONTEND_PATH=../wallet-frontend BACKEND_PATH=../go-wallet-backend
 ```
+
+**Note:** The setup scripts automatically use `npm install --legacy-peer-deps` to handle
+peer dependency conflicts in the wwWallet frontend with newer TypeScript versions.
 
 ### Option 3: Docker
 

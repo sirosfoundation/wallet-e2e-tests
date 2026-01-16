@@ -8,12 +8,14 @@
 # Usage:
 #   ./scripts/setup-local.sh
 #   ./scripts/setup-local.sh --frontend-path ../wallet-frontend --backend-path ../go-wallet-backend
+#   ./scripts/setup-local.sh --skip-install  # Skip npm install (use existing node_modules)
 
 set -e
 
 # Default paths (relative to this repo)
 FRONTEND_PATH="${FRONTEND_PATH:-../wallet-frontend}"
 BACKEND_PATH="${BACKEND_PATH:-../go-wallet-backend}"
+SKIP_INSTALL="${SKIP_INSTALL:-false}"
 
 # Parse command line arguments
 while [[ $# -gt 0 ]]; do
@@ -26,8 +28,17 @@ while [[ $# -gt 0 ]]; do
             BACKEND_PATH="$2"
             shift 2
             ;;
+        --skip-install)
+            SKIP_INSTALL="true"
+            shift
+            ;;
         --help)
-            echo "Usage: $0 [--frontend-path PATH] [--backend-path PATH]"
+            echo "Usage: $0 [--frontend-path PATH] [--backend-path PATH] [--skip-install]"
+            echo ""
+            echo "Options:"
+            echo "  --frontend-path PATH  Path to wallet-frontend repo"
+            echo "  --backend-path PATH   Path to go-wallet-backend repo"
+            echo "  --skip-install        Skip npm install (use existing node_modules)"
             exit 0
             ;;
         *)
@@ -61,6 +72,36 @@ pkill -f "go run.*go-wallet-backend" 2>/dev/null || true
 pkill -f "vite" 2>/dev/null || true
 sleep 2
 
+# Install frontend dependencies if needed
+if [ "$SKIP_INSTALL" != "true" ]; then
+    echo "Installing frontend dependencies..."
+    cd "$FRONTEND_PATH"
+    # Use --legacy-peer-deps for compatibility with wwWallet frontend
+    # which has peer dependency conflicts with newer TypeScript versions
+    if npm install --legacy-peer-deps 2>/dev/null; then
+        echo "Frontend dependencies installed"
+    else
+        echo "Warning: npm install failed, trying without --legacy-peer-deps..."
+        npm install || true
+    fi
+fi
+
+# Detect the correct npm script for starting the frontend
+# wwWallet uses 'start' (vite), some forks might use 'dev'
+detect_frontend_script() {
+    cd "$FRONTEND_PATH"
+    if grep -q '"start":' package.json 2>/dev/null; then
+        echo "start"
+    elif grep -q '"dev":' package.json 2>/dev/null; then
+        echo "dev"
+    else
+        echo "start"  # fallback
+    fi
+}
+
+FRONTEND_SCRIPT=$(detect_frontend_script)
+echo "Using frontend script: npm run $FRONTEND_SCRIPT"
+
 # Start backend
 echo "Starting go-wallet-backend..."
 cd "$BACKEND_PATH"
@@ -93,7 +134,7 @@ cd "$FRONTEND_PATH"
 VITE_WALLET_BACKEND_URL="http://localhost:8080" \
 VITE_WEBAUTHN_RPID="localhost" \
 VITE_LOGIN_WITH_PASSWORD="false" \
-npm run start -- --host &
+npm run "$FRONTEND_SCRIPT" -- --host &
 FRONTEND_PID=$!
 
 # Wait for frontend to be ready

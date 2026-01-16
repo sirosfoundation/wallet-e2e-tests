@@ -7,7 +7,7 @@
 #   make ci                       # Full CI run (clone, build, test)
 
 .PHONY: help install test test-headed test-debug test-ui \
-        setup setup-local setup-git setup-docker \
+        setup setup-local setup-local-quick setup-git setup-docker \
         teardown clean check-servers \
         clone-frontend clone-backend clone-all
 
@@ -92,6 +92,13 @@ setup-local: install ## Start servers from local repos
 		echo "$(RED)Backend not found: $(BACKEND_PATH)$(NC)"; exit 1; fi
 	./scripts/setup-local.sh --frontend-path "$(FRONTEND_PATH)" --backend-path "$(BACKEND_PATH)"
 
+setup-local-quick: install ## Start servers (skip npm install)
+	@if [ ! -d "$(FRONTEND_PATH)" ]; then \
+		echo "$(RED)Frontend not found: $(FRONTEND_PATH)$(NC)"; exit 1; fi
+	@if [ ! -d "$(BACKEND_PATH)" ]; then \
+		echo "$(RED)Backend not found: $(BACKEND_PATH)$(NC)"; exit 1; fi
+	./scripts/setup-local.sh --frontend-path "$(FRONTEND_PATH)" --backend-path "$(BACKEND_PATH)" --skip-install
+
 setup-docker: install ## Start servers using Docker
 	docker-compose up -d --wait
 	@echo "$(GREEN)Containers started!$(NC)"
@@ -123,11 +130,13 @@ clone-backend: ## Clone go-wallet-backend at BACKEND_REF
 clone-all: clone-frontend clone-backend ## Clone both repos
 
 setup-git: install clone-all ## Clone repos and start servers
-	@cd $(WORKSPACE_DIR)/wallet-frontend && npm install
+	@echo "$(GREEN)Installing frontend dependencies...$(NC)"
+	@cd $(WORKSPACE_DIR)/wallet-frontend && npm install --legacy-peer-deps
 	@cd $(WORKSPACE_DIR)/go-wallet-backend && go build ./...
 	./scripts/setup-local.sh \
 		--frontend-path "$(WORKSPACE_DIR)/wallet-frontend" \
-		--backend-path "$(WORKSPACE_DIR)/go-wallet-backend"
+		--backend-path "$(WORKSPACE_DIR)/go-wallet-backend" \
+		--skip-install
 
 # =============================================================================
 # CI Target (single command to run everything)
@@ -135,7 +144,7 @@ setup-git: install clone-all ## Clone repos and start servers
 
 ci: install clone-all ## Full CI: clone, build, test (with cleanup)
 	@echo "$(GREEN)Building...$(NC)"
-	cd $(WORKSPACE_DIR)/wallet-frontend && npm ci
+	cd $(WORKSPACE_DIR)/wallet-frontend && npm install --legacy-peer-deps
 	cd $(WORKSPACE_DIR)/go-wallet-backend && go build ./cmd/server/...
 	@echo "$(GREEN)Starting servers...$(NC)"
 	cd $(WORKSPACE_DIR)/go-wallet-backend && \
@@ -144,7 +153,7 @@ ci: install clone-all ## Full CI: clone, build, test (with cleanup)
 		go run ./cmd/server/... &
 	cd $(WORKSPACE_DIR)/wallet-frontend && \
 		VITE_WALLET_BACKEND_URL=http://localhost:8080 \
-		npm run dev -- --host &
+		npm run start -- --host &
 	@echo "$(GREEN)Waiting for servers...$(NC)"
 	@for i in $$(seq 1 60); do \
 		if curl -sf $(BACKEND_URL)/status >/dev/null && curl -sf $(FRONTEND_URL) >/dev/null; then \
@@ -158,9 +167,12 @@ ci: install clone-all ## Full CI: clone, build, test (with cleanup)
 # =============================================================================
 
 teardown: ## Stop servers
+	@echo "$(YELLOW)Stopping servers...$(NC)"
 	@pkill -f "go run.*go-wallet-backend" 2>/dev/null || true
 	@pkill -f "vite" 2>/dev/null || true
+	@pkill -f "node.*wallet-frontend" 2>/dev/null || true
 	@docker-compose down 2>/dev/null || true
+	@sleep 1
 	@echo "$(GREEN)Stopped$(NC)"
 
 clean: ## Remove test artifacts
