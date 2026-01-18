@@ -14,6 +14,7 @@
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
 import { TrustApiHelper, DiscoverAndTrustRequest } from '../../helpers/trust-api';
+import { createTestUser, generateTestToken, type TestUser } from '../../helpers/test-token';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 const MOCK_ISSUER_URL = process.env.MOCK_ISSUER_URL || 'http://localhost:9000';
@@ -144,7 +145,7 @@ test.describe('Discover and Trust - Input Validation @api @trust', () => {
 test.describe('Discover and Trust - Response Structure @api @trust', () => {
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
-  let testToken: string | null = null;
+  let testUser: TestUser;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext({
@@ -152,22 +153,17 @@ test.describe('Discover and Trust - Response Structure @api @trust', () => {
     });
     trustApi = new TrustApiHelper(request, BACKEND_URL);
 
-    // Try to get a test token (if test authentication is available)
-    // This would be populated by a test setup that creates a test user
-    testToken = process.env.TEST_AUTH_TOKEN || null;
-    if (testToken) {
-      trustApi.setAuthToken(testToken);
-    }
+    // Generate a test user with a valid JWT token
+    // The token is signed with the same secret used by the test backend
+    testUser = createTestUser();
+    trustApi.setAuthToken(testUser.token);
   });
 
   test.afterAll(async () => {
     await request.dispose();
   });
 
-  // Skip if no auth token available
   test('issuer discovery returns correct response structure', async () => {
-    test.skip(!testToken, 'Requires TEST_AUTH_TOKEN environment variable');
-
     const { response, status } = await trustApi.discoverAndTrustIssuer(
       'https://issuer.example.com'
     );
@@ -182,8 +178,6 @@ test.describe('Discover and Trust - Response Structure @api @trust', () => {
   });
 
   test('verifier discovery returns correct response structure', async () => {
-    test.skip(!testToken, 'Requires TEST_AUTH_TOKEN environment variable');
-
     const { response, status } = await trustApi.discoverAndTrustVerifier(
       'https://verifier.example.com'
     );
@@ -194,12 +188,11 @@ test.describe('Discover and Trust - Response Structure @api @trust', () => {
     // Verify required fields
     expect(typeof response.trusted).toBe('boolean');
     expect(typeof response.reason).toBe('string');
-    expect(['success', 'partial', 'failed']).toContain(response.discovery_status);
+    // 'skipped' is valid when no trust evaluation is configured for verifiers
+    expect(['success', 'partial', 'failed', 'skipped']).toContain(response.discovery_status);
   });
 
   test('credential_type is passed through to evaluation', async () => {
-    test.skip(!testToken, 'Requires TEST_AUTH_TOKEN environment variable');
-
     const { response, status } = await trustApi.discoverAndTrustIssuer(
       'https://issuer.example.com',
       'eu.europa.ec.eudi.pid.1'
@@ -213,17 +206,16 @@ test.describe('Discover and Trust - Response Structure @api @trust', () => {
 test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', () => {
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
-  let testToken: string | null = null;
+  let testUser: TestUser;
   let mockIssuerAvailable = false;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
 
-    testToken = process.env.TEST_AUTH_TOKEN || null;
-    if (testToken) {
-      trustApi.setAuthToken(testToken);
-    }
+    // Generate a test user with a valid JWT token
+    testUser = createTestUser();
+    trustApi.setAuthToken(testUser.token);
 
     // Check if mock issuer is available
     try {
@@ -239,7 +231,6 @@ test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', 
   });
 
   test('discovers mock issuer metadata successfully', async () => {
-    test.skip(!testToken, 'Requires TEST_AUTH_TOKEN environment variable');
     test.skip(!mockIssuerAvailable, 'Mock issuer not available');
 
     const { response, status } = await trustApi.discoverAndTrustIssuer(MOCK_ISSUER_URL);
@@ -250,7 +241,6 @@ test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', 
   });
 
   test('evaluates trust for mock issuer', async () => {
-    test.skip(!testToken, 'Requires TEST_AUTH_TOKEN environment variable');
     test.skip(!mockIssuerAvailable, 'Mock issuer not available');
 
     const { response, status } = await trustApi.discoverAndTrustIssuer(MOCK_ISSUER_URL);
@@ -262,7 +252,6 @@ test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', 
   });
 
   test('returns trusted_certificates when issuer has IACA', async () => {
-    test.skip(!testToken, 'Requires TEST_AUTH_TOKEN environment variable');
     test.skip(!mockIssuerAvailable, 'Mock issuer not available');
 
     const { response, status } = await trustApi.discoverAndTrustIssuer(MOCK_ISSUER_URL);
@@ -283,17 +272,16 @@ test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', 
 test.describe('Discover and Trust - go-trust PDP Integration @api @trust @pdp', () => {
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
-  let testToken: string | null = null;
+  let testUser: TestUser;
   let pdpAvailable = false;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
 
-    testToken = process.env.TEST_AUTH_TOKEN || null;
-    if (testToken) {
-      trustApi.setAuthToken(testToken);
-    }
+    // Generate a test user with a valid JWT token
+    testUser = createTestUser();
+    trustApi.setAuthToken(testUser.token);
 
     // Check if go-trust PDP is available
     try {
@@ -320,7 +308,6 @@ test.describe('Discover and Trust - go-trust PDP Integration @api @trust @pdp', 
   });
 
   test('trusted issuer returns trusted=true via PDP', async () => {
-    test.skip(!testToken, 'Requires TEST_AUTH_TOKEN environment variable');
     test.skip(!pdpAvailable, 'go-trust PDP not available');
 
     // Use a known trusted issuer configured in the PDP
@@ -337,7 +324,6 @@ test.describe('Discover and Trust - go-trust PDP Integration @api @trust @pdp', 
   });
 
   test('untrusted issuer returns trusted=false via PDP', async () => {
-    test.skip(!testToken, 'Requires TEST_AUTH_TOKEN environment variable');
     test.skip(!pdpAvailable, 'go-trust PDP not available');
 
     // Use a known untrusted issuer

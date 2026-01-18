@@ -22,7 +22,7 @@ export interface DiscoverAndTrustResponse {
   reason: string;
   trusted_certificates?: string[];
   trust_framework?: string;
-  discovery_status: 'success' | 'partial' | 'failed';
+  discovery_status: 'success' | 'partial' | 'failed' | 'skipped';
   discovery_error?: string;
 }
 
