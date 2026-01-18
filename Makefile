@@ -58,7 +58,9 @@ install: ## Install dependencies and Playwright
 
 up: ## Start test environment (frontend + backend + mocks)
 	@echo "$(GREEN)Starting test environment...$(NC)"
-	docker-compose -f $(TEST_COMPOSE_FILE) up -d --build
+	@# Copy our Dockerfile to the frontend context before build
+	@cp -f dockerfiles/frontend.Dockerfile $(FRONTEND_PATH)/Dockerfile.e2e 2>/dev/null || true
+	docker compose -f $(TEST_COMPOSE_FILE) up -d --build
 	@echo "$(GREEN)Waiting for services to be healthy...$(NC)"
 	@for i in $$(seq 1 120); do \
 		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
@@ -76,11 +78,11 @@ up: ## Start test environment (frontend + backend + mocks)
 
 down: ## Stop test environment
 	@echo "$(YELLOW)Stopping test environment...$(NC)"
-	-@docker-compose -f $(TEST_COMPOSE_FILE) down -v 2>/dev/null || true
+	-@docker compose -f $(TEST_COMPOSE_FILE) down -v 2>/dev/null || true
 	@echo "$(GREEN)Services stopped$(NC)"
 
 logs: ## View logs from test services
-	docker-compose -f $(TEST_COMPOSE_FILE) logs -f
+	docker compose -f $(TEST_COMPOSE_FILE) logs -f
 
 status: ## Check status of test services
 	@echo "Service Status:"

@@ -26,7 +26,7 @@ services:
   wallet-frontend:
     build:
       context: ${FRONTEND_PATH:-../wallet-frontend}
-      dockerfile: ${DOCKERFILE_PATH:-${PWD}/dockerfiles/frontend.Dockerfile}
+      dockerfile: Dockerfile.e2e
       args:
         - VITE_WALLET_BACKEND_URL=http://localhost:8080
         - VITE_WS_URL=ws://localhost:8080
@@ -50,15 +50,15 @@ services:
       - e2e-test-network
 
   # Go Wallet Backend - built from local source
+  # Uses network_mode: host so that proxy requests to localhost:9000 (mock issuer)
+  # work correctly - the backend can reach all localhost ports on the host network
   wallet-backend:
     build:
       context: ${BACKEND_PATH:-../go-wallet-backend}
       dockerfile: Dockerfile
     image: wallet-backend-e2e-test:local
     container_name: wallet-backend-e2e-test
-    ports:
-      - "8080:8080"
-      - "8081:8081"
+    network_mode: host
     environment:
       - WALLET_JWT_SECRET=test-secret-for-e2e-testing-minimum-32-chars
       - WALLET_SERVER_WEBAUTHN_DISPLAY_NAME=E2E Test Wallet
@@ -68,19 +68,15 @@ services:
       - WALLET_SERVER_ADMIN_PORT=8081
       - WALLET_SERVER_ADMIN_TOKEN=e2e-test-admin-token-for-testing-purposes-only
       - WALLET_LOG_LEVEL=debug
-      - WALLET_TRUST_PDP_URL=http://mock-trust-pdp:9091
+      # With network_mode: host, use localhost for PDP too
+      - WALLET_TRUST_PDP_URL=http://localhost:9091
       - WALLET_TRUST_ENABLED=true
-    # Map localhost to mock services for discovery requests
-    extra_hosts:
-      - "localhost:host-gateway"
     depends_on:
       mock-issuer:
         condition: service_healthy
       mock-trust-pdp:
         condition: service_healthy
     # Note: distroless image has no shell/wget, healthcheck done by make up
-    networks:
-      - e2e-test-network
 
   # Mock OpenID4VCI Credential Issuer
   mock-issuer:
