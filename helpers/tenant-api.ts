@@ -12,6 +12,8 @@ import { APIRequestContext } from '@playwright/test';
 
 // Admin API URL (defaults to localhost:8081)
 const ADMIN_URL = process.env.ADMIN_URL || 'http://localhost:8081';
+// Admin token for authentication
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || '';
 
 export interface Tenant {
   id: string;
@@ -40,10 +42,25 @@ export interface TenantMembership {
 export class TenantApiHelper {
   private request: APIRequestContext;
   private adminUrl: string;
+  private adminToken: string;
 
-  constructor(request: APIRequestContext, adminUrl: string = ADMIN_URL) {
+  constructor(request: APIRequestContext, adminUrl: string = ADMIN_URL, adminToken: string = ADMIN_TOKEN) {
     this.request = request;
     this.adminUrl = adminUrl;
+    this.adminToken = adminToken;
+  }
+
+  /**
+   * Get default headers including authorization if token is set
+   */
+  private getHeaders(): Record<string, string> {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    if (this.adminToken) {
+      headers['Authorization'] = `Bearer ${this.adminToken}`;
+    }
+    return headers;
   }
 
   /**
@@ -51,7 +68,9 @@ export class TenantApiHelper {
    */
   async isAvailable(): Promise<boolean> {
     try {
-      const response = await this.request.get(`${this.adminUrl}/admin/status`);
+      const response = await this.request.get(`${this.adminUrl}/admin/status`, {
+        headers: this.getHeaders(),
+      });
       return response.ok();
     } catch {
       return false;
@@ -62,7 +81,9 @@ export class TenantApiHelper {
    * Get admin API status
    */
   async getStatus(): Promise<{ status: string; service: string }> {
-    const response = await this.request.get(`${this.adminUrl}/admin/status`);
+    const response = await this.request.get(`${this.adminUrl}/admin/status`, {
+      headers: this.getHeaders(),
+    });
     if (!response.ok()) {
       throw new Error(`Admin API status check failed: ${response.status()}`);
     }
@@ -73,7 +94,9 @@ export class TenantApiHelper {
    * List all tenants
    */
   async listTenants(): Promise<Tenant[]> {
-    const response = await this.request.get(`${this.adminUrl}/admin/tenants`);
+    const response = await this.request.get(`${this.adminUrl}/admin/tenants`, {
+      headers: this.getHeaders(),
+    });
     if (!response.ok()) {
       throw new Error(`Failed to list tenants: ${response.status()}`);
     }
@@ -85,7 +108,9 @@ export class TenantApiHelper {
    * Get a specific tenant by ID
    */
   async getTenant(tenantId: string): Promise<Tenant | null> {
-    const response = await this.request.get(`${this.adminUrl}/admin/tenants/${tenantId}`);
+    const response = await this.request.get(`${this.adminUrl}/admin/tenants/${tenantId}`, {
+      headers: this.getHeaders(),
+    });
     if (response.status() === 404) {
       return null;
     }
@@ -100,6 +125,7 @@ export class TenantApiHelper {
    */
   async createTenant(tenant: CreateTenantRequest): Promise<Tenant> {
     const response = await this.request.post(`${this.adminUrl}/admin/tenants`, {
+      headers: this.getHeaders(),
       data: tenant,
     });
     if (!response.ok()) {
@@ -120,6 +146,7 @@ export class TenantApiHelper {
     }
 
     const response = await this.request.put(`${this.adminUrl}/admin/tenants/${tenantId}`, {
+      headers: this.getHeaders(),
       data: {
         id: tenantId,
         name: updates.name ?? current.name,
@@ -138,7 +165,9 @@ export class TenantApiHelper {
    * Delete a tenant
    */
   async deleteTenant(tenantId: string): Promise<void> {
-    const response = await this.request.delete(`${this.adminUrl}/admin/tenants/${tenantId}`);
+    const response = await this.request.delete(`${this.adminUrl}/admin/tenants/${tenantId}`, {
+      headers: this.getHeaders(),
+    });
     if (!response.ok() && response.status() !== 404) {
       const error = await response.text();
       throw new Error(`Failed to delete tenant: ${response.status()} - ${error}`);
@@ -163,7 +192,9 @@ export class TenantApiHelper {
    * Get users in a tenant
    */
   async getTenantUsers(tenantId: string): Promise<string[]> {
-    const response = await this.request.get(`${this.adminUrl}/admin/tenants/${tenantId}/users`);
+    const response = await this.request.get(`${this.adminUrl}/admin/tenants/${tenantId}/users`, {
+      headers: this.getHeaders(),
+    });
     if (!response.ok()) {
       throw new Error(`Failed to get tenant users: ${response.status()}`);
     }
@@ -176,6 +207,7 @@ export class TenantApiHelper {
    */
   async addUserToTenant(tenantId: string, userId: string, role: string = 'user'): Promise<void> {
     const response = await this.request.post(`${this.adminUrl}/admin/tenants/${tenantId}/users`, {
+      headers: this.getHeaders(),
       data: { user_id: userId, role },
     });
     if (!response.ok()) {
@@ -189,7 +221,10 @@ export class TenantApiHelper {
    */
   async removeUserFromTenant(tenantId: string, userId: string): Promise<void> {
     const response = await this.request.delete(
-      `${this.adminUrl}/admin/tenants/${tenantId}/users/${userId}`
+      `${this.adminUrl}/admin/tenants/${tenantId}/users/${userId}`,
+      {
+        headers: this.getHeaders(),
+      }
     );
     if (!response.ok()) {
       const error = await response.text();

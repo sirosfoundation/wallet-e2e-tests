@@ -1,6 +1,6 @@
 # Wallet E2E Tests - Reusable Workflow
 #
-# This workflow tests wallet-frontend against go-wallet-backend.
+# This workflow tests wallet-frontend against go-wallet-backend using Docker Compose.
 # It can be called from either repository to ensure compatibility.
 #
 # Default repositories:
@@ -11,14 +11,14 @@
 #   uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
 #   with:
 #     frontend-ref: ${{ github.sha }}
-#     frontend-repo: ${{ github.server_url }}/${{ github.repository }}.git
+#     frontend-repo: ${{ github.repository }}
 #     backend-refs: '["main", "v1.0.0"]'
 #
 # Usage from go-wallet-backend (or fork):
 #   uses: sirosfoundation/wallet-e2e-tests/.github/workflows/e2e-tests.yml@main
 #   with:
 #     backend-ref: ${{ github.sha }}
-#     backend-repo: ${{ github.server_url }}/${{ github.repository }}.git
+#     backend-repo: ${{ github.repository }}
 #     frontend-refs: '["master", "v1.0.0"]'
 
 name: E2E Tests
@@ -48,17 +48,17 @@ on:
         type: string
         required: false
         default: '[]'
-      # Repository URLs (for forks or custom repos)
+      # Repository names (owner/repo format, for forks)
       frontend-repo:
-        description: 'Git URL for wallet-frontend'
+        description: 'GitHub repository for wallet-frontend (owner/repo)'
         type: string
         required: false
-        default: 'https://github.com/wwWallet/wallet-frontend.git'
+        default: 'wwWallet/wallet-frontend'
       backend-repo:
-        description: 'Git URL for go-wallet-backend'
+        description: 'GitHub repository for go-wallet-backend (owner/repo)'
         type: string
         required: false
-        default: 'https://github.com/sirosfoundation/go-wallet-backend.git'
+        default: 'sirosfoundation/go-wallet-backend'
       # Test configuration
       test-filter:
         description: 'Playwright test filter (e.g., "@prf" or "@registration")'
@@ -87,13 +87,13 @@ on:
         type: string
         default: 'main'
       frontend-repo:
-        description: 'Frontend repository URL'
+        description: 'Frontend repository (owner/repo)'
         type: string
-        default: 'https://github.com/wwWallet/wallet-frontend.git'
+        default: 'wwWallet/wallet-frontend'
       backend-repo:
-        description: 'Backend repository URL'
+        description: 'Backend repository (owner/repo)'
         type: string
-        default: 'https://github.com/sirosfoundation/go-wallet-backend.git'
+        default: 'sirosfoundation/go-wallet-backend'
       test-filter:
         description: 'Test filter (optional)'
         type: string
@@ -125,7 +125,6 @@ jobs:
           fi
           
           # Build matrix JSON
-          # If a single ref is specified, use the array refs for the other component
           if [ -n "$FRONTEND_REF" ] && [ "$BACKEND_REFS" != "[]" ]; then
             # Testing frontend against multiple backends
             MATRIX=$(echo "$BACKEND_REFS" | jq -c --arg f "$FRONTEND_REF" '{include: [.[] | {frontend: $f, backend: .}]}')
@@ -154,8 +153,6 @@ jobs:
     steps:
       - name: Checkout E2E tests
         uses: actions/checkout@v4
-        with:
-          repository: sirosfoundation/wallet-e2e-tests
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -163,81 +160,62 @@ jobs:
           node-version: '20'
           cache: 'npm'
 
-      - name: Setup Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
       - name: Install test dependencies
         run: |
           npm ci
           npx playwright install chromium --with-deps
 
-      - name: Clone wallet-frontend
+      - name: Checkout wallet-frontend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.frontend-repo || 'wwWallet/wallet-frontend' }}
+          ref: ${{ matrix.frontend }}
+          path: wallet-frontend
+
+      - name: Checkout go-wallet-backend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.backend-repo || 'sirosfoundation/go-wallet-backend' }}
+          ref: ${{ matrix.backend }}
+          path: go-wallet-backend
+
+      - name: Show versions
         run: |
-          git clone --depth 1 ${{ inputs.frontend-repo || 'https://github.com/wwWallet/wallet-frontend.git' }} wallet-frontend
-          cd wallet-frontend
-          git fetch --depth 1 origin ${{ matrix.frontend }}
-          git checkout FETCH_HEAD
-          echo "Frontend SHA: $(git rev-parse HEAD)"
+          echo "Frontend: ${{ matrix.frontend }} from ${{ inputs.frontend-repo || 'wwWallet/wallet-frontend' }}"
+          echo "Frontend SHA: $(cd wallet-frontend && git rev-parse HEAD)"
+          echo "Backend: ${{ matrix.backend }} from ${{ inputs.backend-repo || 'sirosfoundation/go-wallet-backend' }}"
+          echo "Backend SHA: $(cd go-wallet-backend && git rev-parse HEAD)"
 
-      - name: Clone go-wallet-backend
+      - name: Start services with Docker Compose
         run: |
-          git clone --depth 1 ${{ inputs.backend-repo || 'https://github.com/sirosfoundation/go-wallet-backend.git' }} go-wallet-backend
-          cd go-wallet-backend
-          git fetch --depth 1 origin ${{ matrix.backend }}
-          git checkout FETCH_HEAD
-          echo "Backend SHA: $(git rev-parse HEAD)"
-
-      - name: Install frontend dependencies
-        working-directory: wallet-frontend
-        run: npm install --legacy-peer-deps
-
-      - name: Build backend
-        working-directory: go-wallet-backend
-        run: go build -v ./cmd/server/...
-
-      - name: Start backend
-        working-directory: go-wallet-backend
-        run: |
-          go run ./cmd/server/... > /tmp/backend.log 2>&1 &
-          echo $! > /tmp/backend.pid
-          echo "Waiting for backend to be ready..."
-          for i in {1..30}; do
-            if curl -sf http://localhost:8080/status > /dev/null 2>&1; then
-              echo "Backend is ready!"
+          # Set paths for CI environment (repos checked out into current directory)
+          export FRONTEND_PATH=./wallet-frontend
+          export BACKEND_PATH=./go-wallet-backend
+          export DOCKERFILE_PATH=$(pwd)/dockerfiles/frontend.Dockerfile
+          
+          docker compose -f docker-compose.test.yml up -d --build
+          
+          echo "Waiting for services to be healthy..."
+          for i in {1..120}; do
+            if curl -sf http://localhost:3000 >/dev/null 2>&1 && \
+               curl -sf http://localhost:8080/status >/dev/null 2>&1 && \
+               curl -sf http://localhost:9000/health >/dev/null 2>&1 && \
+               curl -sf http://localhost:9091/health >/dev/null 2>&1; then
+              echo "All services are healthy!"
               break
             fi
-            sleep 1
+            echo "  Waiting... ($i/120)"
+            sleep 2
           done
-          # Show initial backend logs
-          echo "=== Backend startup logs ==="
-          cat /tmp/backend.log || true
+          
+          # Final health check
+          curl -sf http://localhost:3000 || (echo "Frontend not ready"; exit 1)
+          curl -sf http://localhost:8080/status || (echo "Backend not ready"; exit 1)
+          curl -sf http://localhost:9000/health || (echo "Mock issuer not ready"; exit 1)
+          curl -sf http://localhost:9091/health || (echo "Mock PDP not ready"; exit 1)
         env:
-          WALLET_JWT_SECRET: test-secret-for-e2e-testing-minimum-32-chars
-          WALLET_SERVER_RP_NAME: Wallet E2E Test
-          WALLET_SERVER_RP_ID: localhost
-          WALLET_SERVER_RP_ORIGIN: http://localhost:3000
-          WALLET_SERVER_PORT: "8080"
-          WALLET_LOGGING_LEVEL: debug
-
-      - name: Start frontend
-        working-directory: wallet-frontend
-        run: |
-          npm run dev -- --host &
-          echo "Waiting for frontend to be ready..."
-          for i in {1..60}; do
-            if curl -sf http://localhost:3000 > /dev/null 2>&1; then
-              echo "Frontend is ready!"
-              break
-            fi
-            sleep 1
-          done
-        env:
-          VITE_WALLET_BACKEND_URL: http://localhost:8080
-          VITE_WEBAUTHN_RPID: localhost
-          VITE_LOGIN_WITH_PASSWORD: "false"
-          VITE_STATIC_NAME: wallet-e2e-test
+          FRONTEND_PATH: ./wallet-frontend
+          BACKEND_PATH: ./go-wallet-backend
 
       - name: Run E2E tests
         run: |
@@ -250,16 +228,30 @@ jobs:
         env:
           FRONTEND_URL: http://localhost:3000
           BACKEND_URL: http://localhost:8080
+          MOCK_ISSUER_URL: http://localhost:9000
+          TRUST_PDP_URL: http://localhost:9091
+          ADMIN_TOKEN: e2e-test-admin-token-for-testing-purposes-only
           CI: true
 
-      - name: Show backend logs
+      - name: Show service logs
         if: always()
         run: |
+          echo "=== Docker Compose Service Status ==="
+          docker compose -f docker-compose.test.yml ps
+          echo ""
           echo "=== Backend logs ==="
-          cat /tmp/backend.log || echo "No backend logs found"
+          docker compose -f docker-compose.test.yml logs wallet-backend || true
+          echo ""
+          echo "=== Frontend logs ==="
+          docker compose -f docker-compose.test.yml logs wallet-frontend || true
+
+      - name: Stop services
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
 
       - name: Sanitize artifact names
         id: sanitize
+        if: always()
         run: |
           # Replace slashes with dashes for artifact names
           FRONTEND_SAFE=$(echo "${{ matrix.frontend }}" | tr '/' '-')
@@ -301,7 +293,6 @@ jobs:
           echo "| Frontend | Backend | Result |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|---------|--------|" >> $GITHUB_STEP_SUMMARY
           
-          # The actual results would come from the matrix jobs
           if [ "${{ needs.test.result }}" = "success" ]; then
             echo "summary=All tests passed" >> $GITHUB_OUTPUT
             echo "✅ All tests passed" >> $GITHUB_STEP_SUMMARY

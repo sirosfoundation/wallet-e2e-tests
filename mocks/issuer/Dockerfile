@@ -6,16 +6,12 @@ WORKDIR /app
 # Install wget for health checks
 RUN apk add --no-cache wget
 
-# Copy source
-COPY index.ts ./
+# Copy source files
 COPY package.json ./
+COPY index.mjs ./
 
-# Install dependencies
-RUN npm install
-
-# Build TypeScript
-RUN npx tsc index.ts --outDir dist --esModuleInterop --module commonjs --target es2020
+# No npm install needed - uses only built-in Node.js modules
 
 EXPOSE 9000
 
-CMD ["node", "dist/index.js"]
+CMD ["node", "index.mjs"]

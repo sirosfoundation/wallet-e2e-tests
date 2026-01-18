@@ -1,28 +1,23 @@
 # Wallet E2E Tests Makefile
 #
 # Usage:
-#   make test                     # Run against localhost:3000/8080
-#   make setup-local              # Start servers from local repos
-#   make setup-git                # Clone repos and start servers
-#   make ci                       # Full CI run (clone, build, test)
+#   make up         # Start test environment (Docker)
+#   make run        # Run all E2E tests
+#   make down       # Stop test environment
+#   make ci-docker  # Full CI: up, run, down
 
 .PHONY: help install test test-headed test-debug test-ui \
-        setup setup-local setup-local-quick setup-git setup-docker \
-        teardown clean check-servers \
-        clone-frontend clone-backend clone-all
+        test-prf test-registration test-login \
+        up down logs run ci-docker status \
+        clean clean-all check-servers
 
 # Configuration
 FRONTEND_URL ?= http://localhost:3000
 BACKEND_URL ?= http://localhost:8080
-FRONTEND_PATH ?= ../wallet-frontend
-BACKEND_PATH ?= ../go-wallet-backend
-
-# Git repository settings
-FRONTEND_REPO ?= https://github.com/wwWallet/wallet-frontend.git
-FRONTEND_REF ?= master
-BACKEND_REPO ?= https://github.com/sirosfoundation/go-wallet-backend.git
-BACKEND_REF ?= main
-WORKSPACE_DIR ?= .workspace
+MOCK_ISSUER_URL ?= http://localhost:9000
+MOCK_PDP_URL ?= http://localhost:9091
+TEST_COMPOSE_FILE := docker-compose.test.yml
+ADMIN_TOKEN ?= e2e-test-admin-token-for-testing-purposes-only
 
 # Colors
 GREEN := \033[0;32m
@@ -33,11 +28,16 @@ NC := \033[0m
 help: ## Show this help
 	@echo "Wallet E2E Tests"
 	@echo ""
+	@echo "Quick Start:"
+	@echo "  make up       # Start all services"
+	@echo "  make run      # Run tests"
+	@echo "  make down     # Stop services"
+	@echo ""
 	@echo "Configuration:"
-	@echo "  FRONTEND_URL  = $(FRONTEND_URL)"
-	@echo "  BACKEND_URL   = $(BACKEND_URL)"
-	@echo "  FRONTEND_REF  = $(FRONTEND_REF)"
-	@echo "  BACKEND_REF   = $(BACKEND_REF)"
+	@echo "  FRONTEND_URL    = $(FRONTEND_URL)"
+	@echo "  BACKEND_URL     = $(BACKEND_URL)"
+	@echo "  MOCK_ISSUER_URL = $(MOCK_ISSUER_URL)"
+	@echo "  MOCK_PDP_URL    = $(MOCK_PDP_URL)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-18s$(NC) %s\n", $$1, $$2}'
@@ -53,143 +53,110 @@ install: ## Install dependencies and Playwright
 	@echo "$(GREEN)Ready!$(NC)"
 
 # =============================================================================
+# Docker Compose Test Environment
+# =============================================================================
+
+up: ## Start test environment (frontend + backend + mocks)
+	@echo "$(GREEN)Starting test environment...$(NC)"
+	docker-compose -f $(TEST_COMPOSE_FILE) up -d --build
+	@echo "$(GREEN)Waiting for services to be healthy...$(NC)"
+	@for i in $$(seq 1 120); do \
+		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
+		   curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1; then \
+			echo "$(GREEN)All services are healthy!$(NC)"; break; \
+		fi; \
+		echo "  Waiting... ($$i/120)"; sleep 2; \
+	done
+	@curl -sf $(FRONTEND_URL) >/dev/null || (echo "$(RED)Frontend not ready$(NC)"; exit 1)
+	@curl -sf $(BACKEND_URL)/status >/dev/null || (echo "$(RED)Backend not ready$(NC)"; exit 1)
+	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null || (echo "$(RED)Mock issuer not ready$(NC)"; exit 1)
+	@curl -sf $(MOCK_PDP_URL)/health >/dev/null || (echo "$(RED)Mock PDP not ready$(NC)"; exit 1)
+
+down: ## Stop test environment
+	@echo "$(YELLOW)Stopping test environment...$(NC)"
+	-@docker-compose -f $(TEST_COMPOSE_FILE) down -v 2>/dev/null || true
+	@echo "$(GREEN)Services stopped$(NC)"
+
+logs: ## View logs from test services
+	docker-compose -f $(TEST_COMPOSE_FILE) logs -f
+
+status: ## Check status of test services
+	@echo "Service Status:"
+	@curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
+		echo "  $(GREEN)✓$(NC) Frontend: $(FRONTEND_URL)" || \
+		echo "  $(RED)✗$(NC) Frontend: $(FRONTEND_URL)"
+	@curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
+		echo "  $(GREEN)✓$(NC) Backend: $(BACKEND_URL)" || \
+		echo "  $(RED)✗$(NC) Backend: $(BACKEND_URL)"
+	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
+		echo "  $(GREEN)✓$(NC) Mock Issuer: $(MOCK_ISSUER_URL)" || \
+		echo "  $(RED)✗$(NC) Mock Issuer: $(MOCK_ISSUER_URL)"
+	@curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1 && \
+		echo "  $(GREEN)✓$(NC) Mock PDP: $(MOCK_PDP_URL)" || \
+		echo "  $(RED)✗$(NC) Mock PDP: $(MOCK_PDP_URL)"
+
+# =============================================================================
 # Test Execution
 # =============================================================================
 
-test: ## Run all tests
-	@echo "$(GREEN)Running tests...$(NC)"
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test
+run: ## Run all E2E tests (requires 'make up' first)
+	@echo "$(GREEN)Running E2E tests...$(NC)"
+	@curl -sf $(FRONTEND_URL) >/dev/null || \
+		(echo "$(RED)Frontend not running. Run 'make up' first.$(NC)"; exit 1)
+	@curl -sf $(BACKEND_URL)/status >/dev/null || \
+		(echo "$(RED)Backend not running. Run 'make up' first.$(NC)"; exit 1)
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		npx playwright test
+
+test: run ## Alias for 'run'
 
 test-headed: ## Run tests with visible browser
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test --headed
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		npx playwright test --headed
 
 test-debug: ## Run tests with debugger
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test --debug
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		npx playwright test --debug
 
 test-ui: ## Open Playwright UI
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test --ui
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		npx playwright test --ui
 
 test-prf: ## Run PRF tests only
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test --grep "@prf"
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		npx playwright test --grep "@prf"
 
 test-registration: ## Run registration tests only
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test --grep "@registration"
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		npx playwright test --grep "@registration"
 
 test-login: ## Run login tests only
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test --grep "@login"
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		npx playwright test --grep "@login"
 
-# =============================================================================
-# Server Setup
-# =============================================================================
-
-setup: install check-servers ## Verify servers are running
-	@echo "$(GREEN)Ready to test!$(NC)"
-
-setup-local: install ## Start servers from local repos
-	@if [ ! -d "$(FRONTEND_PATH)" ]; then \
-		echo "$(RED)Frontend not found: $(FRONTEND_PATH)$(NC)"; exit 1; fi
-	@if [ ! -d "$(BACKEND_PATH)" ]; then \
-		echo "$(RED)Backend not found: $(BACKEND_PATH)$(NC)"; exit 1; fi
-	./scripts/setup-local.sh --frontend-path "$(FRONTEND_PATH)" --backend-path "$(BACKEND_PATH)"
-
-setup-local-quick: install ## Start servers (skip npm install)
-	@if [ ! -d "$(FRONTEND_PATH)" ]; then \
-		echo "$(RED)Frontend not found: $(FRONTEND_PATH)$(NC)"; exit 1; fi
-	@if [ ! -d "$(BACKEND_PATH)" ]; then \
-		echo "$(RED)Backend not found: $(BACKEND_PATH)$(NC)"; exit 1; fi
-	./scripts/setup-local.sh --frontend-path "$(FRONTEND_PATH)" --backend-path "$(BACKEND_PATH)" --skip-install
-
-setup-docker: install ## Start servers using Docker
-	docker-compose up -d --wait
-	@echo "$(GREEN)Containers started!$(NC)"
-
-# =============================================================================
-# Git-based Setup (clone repos)
-# =============================================================================
-
-clone-frontend: ## Clone wallet-frontend at FRONTEND_REF
-	@mkdir -p $(WORKSPACE_DIR)
-	@if [ -d "$(WORKSPACE_DIR)/wallet-frontend" ]; then \
-		cd $(WORKSPACE_DIR)/wallet-frontend && git fetch --all && git checkout $(FRONTEND_REF); \
-	else \
-		git clone $(FRONTEND_REPO) $(WORKSPACE_DIR)/wallet-frontend && \
-		cd $(WORKSPACE_DIR)/wallet-frontend && git checkout $(FRONTEND_REF); \
-	fi
-	@echo "$(GREEN)Frontend at $(FRONTEND_REF)$(NC)"
-
-clone-backend: ## Clone go-wallet-backend at BACKEND_REF
-	@mkdir -p $(WORKSPACE_DIR)
-	@if [ -d "$(WORKSPACE_DIR)/go-wallet-backend" ]; then \
-		cd $(WORKSPACE_DIR)/go-wallet-backend && git fetch --all && git checkout $(BACKEND_REF); \
-	else \
-		git clone $(BACKEND_REPO) $(WORKSPACE_DIR)/go-wallet-backend && \
-		cd $(WORKSPACE_DIR)/go-wallet-backend && git checkout $(BACKEND_REF); \
-	fi
-	@echo "$(GREEN)Backend at $(BACKEND_REF)$(NC)"
-
-clone-all: clone-frontend clone-backend ## Clone both repos
-
-setup-git: install clone-all ## Clone repos and start servers
-	@echo "$(GREEN)Installing frontend dependencies...$(NC)"
-	@cd $(WORKSPACE_DIR)/wallet-frontend && npm install --legacy-peer-deps
-	@cd $(WORKSPACE_DIR)/go-wallet-backend && go build ./...
-	./scripts/setup-local.sh \
-		--frontend-path "$(WORKSPACE_DIR)/wallet-frontend" \
-		--backend-path "$(WORKSPACE_DIR)/go-wallet-backend" \
-		--skip-install
-
-# =============================================================================
-# CI Target (single command to run everything)
-# =============================================================================
-
-ci: install clone-all ## Full CI: clone, build, test (with cleanup)
-	@echo "$(GREEN)Building...$(NC)"
-	cd $(WORKSPACE_DIR)/wallet-frontend && npm install --legacy-peer-deps
-	cd $(WORKSPACE_DIR)/go-wallet-backend && go build ./cmd/server/...
-	@echo "$(GREEN)Starting servers...$(NC)"
-	cd $(WORKSPACE_DIR)/go-wallet-backend && \
-		RP_ORIGIN=http://localhost:3000 \
-		WALLET_JWT_SECRET=test-secret-for-e2e-testing-minimum-32-chars \
-		go run ./cmd/server/... &
-	cd $(WORKSPACE_DIR)/wallet-frontend && \
-		VITE_WALLET_BACKEND_URL=http://localhost:8080 \
-		npm run start -- --host &
-	@echo "$(GREEN)Waiting for servers...$(NC)"
-	@for i in $$(seq 1 60); do \
-		if curl -sf $(BACKEND_URL)/status >/dev/null && curl -sf $(FRONTEND_URL) >/dev/null; then \
-			break; fi; sleep 1; done
+ci-docker: up ## Full CI: start services, run tests, cleanup
 	@echo "$(GREEN)Running tests...$(NC)"
-	-npx playwright test --forbid-only; result=$$?; \
-		$(MAKE) teardown; exit $$result
+	-FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		npx playwright test; \
+	result=$$?; \
+	$(MAKE) down; \
+	exit $$result
 
 # =============================================================================
 # Cleanup
 # =============================================================================
 
-teardown: ## Stop servers
-	@echo "$(YELLOW)Stopping servers...$(NC)"
-	@pkill -f "go run.*go-wallet-backend" 2>/dev/null || true
-	@pkill -f "vite" 2>/dev/null || true
-	@pkill -f "node.*wallet-frontend" 2>/dev/null || true
-	@docker-compose down 2>/dev/null || true
-	@sleep 1
-	@echo "$(GREEN)Stopped$(NC)"
-
 clean: ## Remove test artifacts
 	rm -rf test-results/ playwright-report/
 
 clean-all: clean ## Remove all generated files
-	rm -rf node_modules/ $(WORKSPACE_DIR)/
-
-check-servers: ## Check if servers are reachable
-	@curl -sf $(BACKEND_URL)/status >/dev/null && \
-		echo "  $(GREEN)✓$(NC) Backend: $(BACKEND_URL)" || \
-		(echo "  $(RED)✗$(NC) Backend: $(BACKEND_URL)"; exit 1)
-	@curl -sf $(FRONTEND_URL) >/dev/null && \
-		echo "  $(GREEN)✓$(NC) Frontend: $(FRONTEND_URL)" || \
-		(echo "  $(RED)✗$(NC) Frontend: $(FRONTEND_URL)"; exit 1)
+	rm -rf node_modules/
 
 .DEFAULT_GOAL := help
-
-test-trust: ## Run discover-and-trust API tests
-FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test specs/api/discover-and-trust.spec.ts
