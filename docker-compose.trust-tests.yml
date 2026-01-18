@@ -1,0 +1,108 @@
+# Docker Compose extension for Trust Evaluation E2E Tests
+#
+# Adds mock services for testing the discover-and-trust endpoint:
+# - mock-issuer: OpenID4VCI credential issuer
+# - mock-verifier: OpenID4VP verifier
+# - mock-trust-pdp: AuthZEN policy decision point
+#
+# Usage:
+#   docker-compose -f docker-compose.yml -f docker-compose.trust-tests.yml up
+#
+# Or to include local development builds:
+#   docker-compose -f docker-compose.yml -f docker-compose.local.yml -f docker-compose.trust-tests.yml up
+
+version: '3.8'
+
+services:
+  # Extend wallet-backend with trust PDP configuration
+  wallet-backend:
+    environment:
+      # Enable AuthZEN trust evaluation
+      - WALLET_TRUST_PDP_URL=http://mock-trust-pdp:9090
+      - WALLET_TRUST_ENABLED=true
+      # Allow the mock services in the web proxy
+      - WALLET_PROXY_ALLOWED_HOSTS=mock-issuer:9000,mock-verifier:9001,mock-trust-pdp:9090
+    depends_on:
+      mock-issuer:
+        condition: service_healthy
+      mock-verifier:
+        condition: service_healthy
+      mock-trust-pdp:
+        condition: service_healthy
+
+  # Mock OpenID4VCI Credential Issuer
+  mock-issuer:
+    build:
+      context: ./mocks/issuer
+      dockerfile: Dockerfile
+    image: wallet-e2e-mock-issuer:latest
+    container_name: mock-issuer-e2e
+    ports:
+      - "9000:9000"
+    environment:
+      - PORT=9000
+      - ISSUER_ID=http://mock-issuer:9000
+      - INCLUDE_IACA=true
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9000/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    networks:
+      - wallet-network
+
+  # Mock OpenID4VP Verifier
+  mock-verifier:
+    build:
+      context: ./mocks/verifier
+      dockerfile: Dockerfile
+    image: wallet-e2e-mock-verifier:latest
+    container_name: mock-verifier-e2e
+    ports:
+      - "9001:9001"
+    environment:
+      - PORT=9001
+      - VERIFIER_ID=http://mock-verifier:9001
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9001/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    networks:
+      - wallet-network
+
+  # Mock AuthZEN Trust PDP (simulates go-trust)
+  mock-trust-pdp:
+    build:
+      context: ./mocks/trust-pdp
+      dockerfile: Dockerfile
+    image: wallet-e2e-mock-trust-pdp:latest
+    container_name: mock-trust-pdp-e2e
+    ports:
+      - "9090:9090"
+    environment:
+      - PORT=9090
+      - PDP_ID=http://mock-trust-pdp:9090
+      # Configure trusted entities for testing
+      - TRUSTED_ISSUERS=http://mock-issuer:9000,http://localhost:9000
+      - TRUSTED_VERIFIERS=http://mock-verifier:9001,http://localhost:9001
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9090/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
+    networks:
+      - wallet-network
+
+  # Extend e2e-tests with trust test environment variables
+  e2e-tests:
+    environment:
+      - MOCK_ISSUER_URL=http://mock-issuer:9000
+      - MOCK_VERIFIER_URL=http://mock-verifier:9001
+      - TRUST_PDP_URL=http://mock-trust-pdp:9090
+      - TRUSTED_ISSUER_URL=http://mock-issuer:9000
+      - TRUSTED_VERIFIER_URL=http://mock-verifier:9001
+    depends_on:
+      - mock-issuer
+      - mock-verifier
+      - mock-trust-pdp
