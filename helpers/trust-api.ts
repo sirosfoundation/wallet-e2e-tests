@@ -103,7 +103,7 @@ export class TrustApiHelper {
     }
 
     const response = await this.request.post(
-      `${this.backendUrl}/api/discover-and-trust`,
+      `${this.backendUrl}/discover-and-trust`,
       {
         data: request,
         headers,

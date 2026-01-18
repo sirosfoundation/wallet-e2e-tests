@@ -104,7 +104,7 @@ test.describe('Discover and Trust - Input Validation @api @trust', () => {
   });
 
   test('rejects request with missing entity_identifier', async () => {
-    const response = await request.post(`${BACKEND_URL}/api/discover-and-trust`, {
+    const response = await request.post(`${BACKEND_URL}/discover-and-trust`, {
       data: {
         role: 'issuer',
         // Missing entity_identifier
@@ -117,7 +117,7 @@ test.describe('Discover and Trust - Input Validation @api @trust', () => {
   });
 
   test('rejects request with missing role', async () => {
-    const response = await request.post(`${BACKEND_URL}/api/discover-and-trust`, {
+    const response = await request.post(`${BACKEND_URL}/discover-and-trust`, {
       data: {
         entity_identifier: 'https://issuer.example.com',
         // Missing role
@@ -129,7 +129,7 @@ test.describe('Discover and Trust - Input Validation @api @trust', () => {
   });
 
   test('rejects request with invalid role', async () => {
-    const response = await request.post(`${BACKEND_URL}/api/discover-and-trust`, {
+    const response = await request.post(`${BACKEND_URL}/discover-and-trust`, {
       data: {
         entity_identifier: 'https://issuer.example.com',
         role: 'admin', // Invalid role
@@ -369,7 +369,7 @@ test.describe('Discover and Trust - Backwards Compatibility @api @trust', () => 
   test('legacy endpoints still work alongside new endpoints', async () => {
     // Verify that existing proxy endpoint still works
     // This ensures backwards compatibility
-    const proxyResponse = await request.post(`${BACKEND_URL}/api/proxy`, {
+    const proxyResponse = await request.post(`${BACKEND_URL}/proxy`, {
       data: {
         url: 'https://example.com/.well-known/openid-credential-issuer',
         method: 'GET',

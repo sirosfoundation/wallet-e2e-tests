@@ -190,3 +190,6 @@ check-servers: ## Check if servers are reachable
 		(echo "  $(RED)✗$(NC) Frontend: $(FRONTEND_URL)"; exit 1)
 
 .DEFAULT_GOAL := help
+
+test-trust: ## Run discover-and-trust API tests
+FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) npx playwright test specs/api/discover-and-trust.spec.ts
