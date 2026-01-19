@@ -7,7 +7,7 @@
 #   make ci-docker  # Full CI: up, run, down
 
 .PHONY: help install test test-headed test-debug test-ui \
-        test-prf test-registration test-login \
+        test-prf test-registration test-login test-trust test-verifier \
         up down logs run ci-docker status \
         clean clean-all check-servers
 
@@ -15,6 +15,7 @@
 FRONTEND_URL ?= http://localhost:3000
 BACKEND_URL ?= http://localhost:8080
 MOCK_ISSUER_URL ?= http://localhost:9000
+MOCK_VERIFIER_URL ?= http://localhost:9001
 MOCK_PDP_URL ?= http://localhost:9091
 TEST_COMPOSE_FILE := docker-compose.test.yml
 ADMIN_TOKEN ?= e2e-test-admin-token-for-testing-purposes-only
@@ -66,6 +67,7 @@ up: ## Start test environment (frontend + backend + mocks)
 		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
 		   curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
 		   curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null 2>&1 && \
 		   curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1; then \
 			echo "$(GREEN)All services are healthy!$(NC)"; break; \
 		fi; \
@@ -74,6 +76,7 @@ up: ## Start test environment (frontend + backend + mocks)
 	@curl -sf $(FRONTEND_URL) >/dev/null || (echo "$(RED)Frontend not ready$(NC)"; exit 1)
 	@curl -sf $(BACKEND_URL)/status >/dev/null || (echo "$(RED)Backend not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null || (echo "$(RED)Mock issuer not ready$(NC)"; exit 1)
+	@curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null || (echo "$(RED)Mock verifier not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null || (echo "$(RED)Mock PDP not ready$(NC)"; exit 1)
 
 down: ## Stop test environment
@@ -95,6 +98,9 @@ status: ## Check status of test services
 	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
 		echo "  $(GREEN)✓$(NC) Mock Issuer: $(MOCK_ISSUER_URL)" || \
 		echo "  $(RED)✗$(NC) Mock Issuer: $(MOCK_ISSUER_URL)"
+	@curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null 2>&1 && \
+		echo "  $(GREEN)✓$(NC) Mock Verifier: $(MOCK_VERIFIER_URL)" || \
+		echo "  $(RED)✗$(NC) Mock Verifier: $(MOCK_VERIFIER_URL)"
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1 && \
 		echo "  $(GREEN)✓$(NC) Mock PDP: $(MOCK_PDP_URL)" || \
 		echo "  $(RED)✗$(NC) Mock PDP: $(MOCK_PDP_URL)"
@@ -110,24 +116,28 @@ run: ## Run all E2E tests (requires 'make up' first)
 	@curl -sf $(BACKEND_URL)/status >/dev/null || \
 		(echo "$(RED)Backend not running. Run 'make up' first.$(NC)"; exit 1)
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test
 
 test: run ## Alias for 'run'
 
 test-headed: ## Run tests with visible browser
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test --headed
 
 test-debug: ## Run tests with debugger
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test --debug
 
 test-ui: ## Open Playwright UI
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test --ui
 
 test-prf: ## Run PRF tests only
@@ -142,10 +152,23 @@ test-login: ## Run login tests only
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
 		npx playwright test --grep "@login"
 
+test-trust: ## Run trust API tests only (issuer and verifier)
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
+		npx playwright test --grep "@trust"
+
+test-verifier: ## Run verifier trust tests only
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
+		npx playwright test specs/api/verifier-trust.spec.ts
+
 ci-docker: up ## Full CI: start services, run tests, cleanup
 	@echo "$(GREEN)Running tests...$(NC)"
 	-FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) TRUST_PDP_URL=$(MOCK_PDP_URL) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test; \
 	result=$$?; \
 	$(MAKE) down; \

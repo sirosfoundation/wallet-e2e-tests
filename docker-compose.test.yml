@@ -76,6 +76,8 @@ services:
         condition: service_healthy
       mock-trust-pdp:
         condition: service_healthy
+      mock-verifier:
+        condition: service_healthy
     # Note: distroless image has no shell/wget, healthcheck done by make up
 
   # Mock OpenID4VCI Credential Issuer
@@ -112,9 +114,29 @@ services:
       - PORT=9091
       - PDP_ID=http://localhost:9091
       - TRUSTED_ISSUERS=http://localhost:9000,http://mock-issuer:9000
-      - TRUSTED_VERIFIERS=http://localhost:9001
+      - TRUSTED_VERIFIERS=http://localhost:9001,http://mock-verifier:9001
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:9091/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - e2e-test-network
+
+  # Mock OpenID4VP Verifier
+  mock-verifier:
+    build:
+      context: ./mocks/verifier
+      dockerfile: Dockerfile
+    image: mock-verifier-e2e-test:local
+    container_name: mock-verifier-e2e-test
+    ports:
+      - "9001:9001"
+    environment:
+      - PORT=9001
+      - VERIFIER_ID=http://localhost:9001
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:9001/health"]
       interval: 3s
       timeout: 3s
       retries: 10
