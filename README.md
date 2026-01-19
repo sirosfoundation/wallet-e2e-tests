@@ -11,17 +11,23 @@ This repository provides:
 1. **E2E test suite** for wallet-frontend and go-wallet-backend integration
 2. **Reusable GitHub Action** for CI/CD pipelines
 3. **PRF mock** that works around Chrome CDP limitations
-4. **Version matrix testing** for compatibility verification
+4. **Multi-tenancy tests** for tenant isolation verification
+5. **Trust API tests** for discover and trust functionality
 
 ## Quick Start
 
 ```bash
 # Install dependencies
-npm install
-npx playwright install chromium
+make install
 
-# Run tests (servers must be running)
-npm test
+# Start test environment
+make up
+
+# Run all tests
+make run
+
+# Stop environment
+make down
 ```
 
 ## CI/CD Integration
@@ -58,50 +64,48 @@ See [docs/CI.md](docs/CI.md) for detailed CI integration documentation.
 
 ## Local Development
 
-### Option 1: Manual server setup
-
-Start servers manually and run tests:
+### Using Make Targets (Recommended)
 
 ```bash
-# Terminal 1: Start backend
-cd ../go-wallet-backend
-RP_ORIGIN=http://localhost:3000 go run ./cmd/server/...
+# Show all available targets
+make help
 
-# Terminal 2: Start frontend  
-cd ../wallet-frontend
-VITE_WALLET_BACKEND_URL=http://localhost:8080 npm run dev
+# Install dependencies and Playwright
+make install
 
-# Terminal 3: Run tests
-cd wallet-e2e-tests
-npm test
+# Start the test environment (Docker Compose)
+make up
+
+# Check service status
+make status
+
+# Run all tests
+make run
+
+# View service logs
+make logs
+
+# Stop the environment
+make down
+
+# Full CI cycle (up + run + down)
+make ci-docker
 ```
 
-### Option 2: Makefile automation
+### Debug Options
 
 ```bash
-# Clone and test specific git refs
-make setup-git FRONTEND_REF=master BACKEND_REF=main
-make test
-make teardown
-
-# Or test from existing local checkouts
-make setup-local FRONTEND_PATH=../wallet-frontend BACKEND_PATH=../go-wallet-backend
-make test
-make teardown
-
-# Quick start (skip npm install if node_modules exists)
-make setup-local-quick FRONTEND_PATH=../wallet-frontend BACKEND_PATH=../go-wallet-backend
+make test-headed  # Run with visible browser
+make test-debug   # Run with debugger attached
+make test-ui      # Open Playwright UI
 ```
 
-**Note:** The setup scripts automatically use `npm install --legacy-peer-deps` to handle
-peer dependency conflicts in the wwWallet frontend with newer TypeScript versions.
+### Configuration Variables
 
-### Option 3: Docker
+Pass variables to customize the environment:
 
 ```bash
-docker-compose up -d
-npm test
-docker-compose down
+make run FRONTEND_URL=http://custom:3000 BACKEND_URL=http://custom:8080
 ```
 
 ## Test Structure
@@ -116,35 +120,41 @@ wallet-e2e-tests/
 ├── helpers/
 │   └── webauthn.ts        # WebAuthn/PRF helper
 ├── specs/
-│   ├── api/               # API compatibility tests
+│   ├── api/               # API tests (discover, trust, verifier)
 │   ├── authenticated/     # Authenticated flow tests
 │   ├── diagnostics/       # Diagnostic tests
 │   ├── full-flow/         # Complete flow tests
 │   ├── login/             # Login tests
+│   ├── multi-tenancy/     # Multi-tenancy tests
 │   ├── prf/               # PRF mock tests
 │   └── registration/      # Registration tests
 ├── scripts/
 │   ├── run-matrix.sh      # Version matrix testing
 │   └── setup-local.sh     # Local dev setup
-├── docker-compose.yml     # Docker configuration
-├── Makefile               # Build automation
-└── playwright.config.ts   # Playwright config
+├── docker-compose.yml         # Docker configuration
+├── docker-compose.test.yml    # Full test environment
+├── Makefile                   # Build automation
+└── playwright.config.ts       # Playwright config
 ```
 
-## Test Tags
+## Test Categories
 
-Run specific test categories:
+Tests are organized by functionality:
+
+| Directory | Description |
+|-----------|-------------|
+| `specs/api/` | API tests (discover, trust, verifier) |
+| `specs/multi-tenancy/` | Tenant isolation tests |
+| `specs/registration/` | Registration flow tests |
+| `specs/login/` | Login flow tests |
+| `specs/prf/` | PRF extension tests |
+| `specs/full-flow/` | Complete flow tests |
+
+Run specific tests with Playwright grep:
 
 ```bash
-npm run test:prf          # @prf - PRF extension tests
-npm run test:registration # @registration - Registration flows
-npm run test:login        # @login - Login flows
-```
-
-Or use Playwright grep:
-
-```bash
-npx playwright test --grep "@full-flow"
+npx playwright test --grep "@multi-tenancy"
+npx playwright test specs/api/
 ```
 
 ## PRF Mock
@@ -166,10 +176,11 @@ test.beforeEach(async ({ page }) => {
 |----------|---------|-------------|
 | `FRONTEND_URL` | `http://localhost:3000` | Frontend URL |
 | `BACKEND_URL` | `http://localhost:8080` | Backend URL |
-| `FRONTEND_PATH` | `../wallet-frontend` | Frontend repo path |
-| `BACKEND_PATH` | `../go-wallet-backend` | Backend repo path |
-| `FRONTEND_REF` | `master` | Frontend git ref |
-| `BACKEND_REF` | `main` | Backend git ref |
+| `ADMIN_URL` | `http://localhost:8081` | Admin API URL |
+| `ADMIN_TOKEN` | (required for multi-tenancy) | Admin API authentication token |
+| `MOCK_ISSUER_URL` | `http://localhost:9000` | Mock issuer URL |
+| `MOCK_VERIFIER_URL` | `http://localhost:9001` | Mock verifier URL |
+| `MOCK_PDP_URL` | `http://localhost:9091` | Mock PDP URL |
 
 ## Backend Configuration
 

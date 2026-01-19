@@ -14,6 +14,7 @@
 # Configuration
 FRONTEND_URL ?= http://localhost:3000
 BACKEND_URL ?= http://localhost:8080
+ADMIN_URL ?= http://localhost:8081
 MOCK_ISSUER_URL ?= http://localhost:9000
 MOCK_VERIFIER_URL ?= http://localhost:9001
 MOCK_PDP_URL ?= http://localhost:9091
@@ -37,6 +38,7 @@ help: ## Show this help
 	@echo "Configuration:"
 	@echo "  FRONTEND_URL    = $(FRONTEND_URL)"
 	@echo "  BACKEND_URL     = $(BACKEND_URL)"
+	@echo "  ADMIN_URL       = $(ADMIN_URL)"
 	@echo "  MOCK_ISSUER_URL = $(MOCK_ISSUER_URL)"
 	@echo "  MOCK_PDP_URL    = $(MOCK_PDP_URL)"
 	@echo ""
@@ -163,6 +165,17 @@ test-verifier: ## Run verifier trust tests only
 		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
 		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test specs/api/verifier-trust.spec.ts
+
+test-multi-tenancy: ## Run multi-tenancy tests (requires Admin API)
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		ADMIN_URL=$(ADMIN_URL) \
+		npx playwright test specs/multi-tenancy/
+
+test-discover: ## Run discover-and-trust API tests
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
+		npx playwright test specs/api/discover-and-trust.spec.ts
 
 ci-docker: up ## Full CI: start services, run tests, cleanup
 	@echo "$(GREEN)Running tests...$(NC)"
