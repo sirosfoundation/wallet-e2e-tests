@@ -20,6 +20,7 @@ import {
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 const ADMIN_URL = process.env.ADMIN_URL || 'http://localhost:8081';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 
 test.describe('Multi-Tenancy Admin API @multi-tenancy', () => {
   let tenantApi: TenantApiHelper;
@@ -559,10 +560,15 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
     page,
     request: apiRequest,
   }) => {
+    // Initialize WebAuthn and PRF mock BEFORE navigation
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
     await webauthn.injectPrfMock();
     await webauthn.addPlatformAuthenticator();
+
+    // Navigate to frontend - required for WebAuthn API to work in page.evaluate()
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('domcontentloaded');
 
     const username = generateTestUsername();
 
@@ -622,7 +628,8 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
           challenge: fromBase64Url(publicKeyOptions.challenge),
           pubKeyCredParams: publicKeyOptions.pubKeyCredParams,
           authenticatorSelection: publicKeyOptions.authenticatorSelection,
-          attestation: publicKeyOptions.attestation || 'direct',
+          // Chrome CDP virtual authenticator only produces 'none' attestation
+          attestation: 'none',
           extensions: {
             prf: {
               eval: {
@@ -640,13 +647,15 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
 
       const response = credential.response as AuthenticatorAttestationResponse;
 
+      // Return credential data with $b64u format for binary fields
+      // This matches wallet-frontend's jsonStringifyTaggedBinary format
       return {
         type: credential.type,
         id: credential.id,
-        rawId: toBase64Url(new Uint8Array(credential.rawId)),
+        rawId: { $b64u: toBase64Url(new Uint8Array(credential.rawId)) },
         response: {
-          attestationObject: toBase64Url(new Uint8Array(response.attestationObject)),
-          clientDataJSON: toBase64Url(new Uint8Array(response.clientDataJSON)),
+          attestationObject: { $b64u: toBase64Url(new Uint8Array(response.attestationObject)) },
+          clientDataJSON: { $b64u: toBase64Url(new Uint8Array(response.clientDataJSON)) },
           transports: response.getTransports?.() || ['internal'],
         },
         authenticatorAttachment: credential.authenticatorAttachment || 'platform',
@@ -680,6 +689,10 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
       }
     );
 
+    if (finishResponse.status() !== 200) {
+      console.error('Registration finish failed:', finishResponse.status(), await finishResponse.text());
+      console.error('Credential result:', JSON.stringify(credentialResult, null, 2));
+    }
     expect(finishResponse.status()).toBe(200);
     const finishData = await finishResponse.json();
 
@@ -694,17 +707,22 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
     await webauthn.cleanup();
   });
 
-  test('should return tenantId in global login finish response for tenant user', async ({
+  test('should reject tenant user from global login endpoint (security boundary)', async ({
     page,
     request: apiRequest,
   }) => {
     // This test requires a registered user to exist
     // We'll register a new user first, then test global login
 
+    // Initialize WebAuthn and PRF mock BEFORE navigation
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
     await webauthn.injectPrfMock();
     await webauthn.addPlatformAuthenticator();
+
+    // Navigate to frontend - required for WebAuthn API to work in page.evaluate()
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('domcontentloaded');
 
     const username = generateTestUsername();
 
@@ -750,7 +768,8 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
           challenge: fromBase64Url(params.publicKeyOptions.challenge),
           pubKeyCredParams: params.publicKeyOptions.pubKeyCredParams,
           authenticatorSelection: params.publicKeyOptions.authenticatorSelection,
-          attestation: params.publicKeyOptions.attestation || 'direct',
+          // Chrome CDP virtual authenticator only produces 'none' attestation
+          attestation: 'none',
           extensions: { prf: { eval: { first: prfSalt } } },
         },
       };
@@ -758,13 +777,15 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
       const credential = await navigator.credentials.create(createOptions) as PublicKeyCredential;
       const response = credential.response as AuthenticatorAttestationResponse;
 
+      // Return credential data with $b64u format for binary fields
+      // This matches wallet-frontend's jsonStringifyTaggedBinary format
       return {
         type: credential.type,
         id: credential.id,
-        rawId: toBase64Url(new Uint8Array(credential.rawId)),
+        rawId: { $b64u: toBase64Url(new Uint8Array(credential.rawId)) },
         response: {
-          attestationObject: toBase64Url(new Uint8Array(response.attestationObject)),
-          clientDataJSON: toBase64Url(new Uint8Array(response.clientDataJSON)),
+          attestationObject: { $b64u: toBase64Url(new Uint8Array(response.attestationObject)) },
+          clientDataJSON: { $b64u: toBase64Url(new Uint8Array(response.clientDataJSON)) },
           transports: response.getTransports?.() || ['internal'],
         },
         authenticatorAttachment: credential.authenticatorAttachment || 'platform',
@@ -834,22 +855,24 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
       const credential = await navigator.credentials.get(getOptions) as PublicKeyCredential;
       const response = credential.response as AuthenticatorAssertionResponse;
 
+      // Return credential data with $b64u format for binary fields
+      // This matches wallet-frontend's jsonStringifyTaggedBinary format
       return {
         type: credential.type,
         id: credential.id,
-        rawId: toBase64Url(new Uint8Array(credential.rawId)),
+        rawId: { $b64u: toBase64Url(new Uint8Array(credential.rawId)) },
         response: {
-          authenticatorData: toBase64Url(new Uint8Array(response.authenticatorData)),
-          clientDataJSON: toBase64Url(new Uint8Array(response.clientDataJSON)),
-          signature: toBase64Url(new Uint8Array(response.signature)),
-          userHandle: response.userHandle ? toBase64Url(new Uint8Array(response.userHandle)) : null,
+          authenticatorData: { $b64u: toBase64Url(new Uint8Array(response.authenticatorData)) },
+          clientDataJSON: { $b64u: toBase64Url(new Uint8Array(response.clientDataJSON)) },
+          signature: { $b64u: toBase64Url(new Uint8Array(response.signature)) },
+          userHandle: response.userHandle ? { $b64u: toBase64Url(new Uint8Array(response.userHandle)) } : null,
         },
         authenticatorAttachment: credential.authenticatorAttachment || 'platform',
         clientExtensionResults: credential.getClientExtensionResults(),
       };
     }, {
-      challenge: beginLoginData.requestOptions.publicKey.challenge,
-      rpId: beginLoginData.requestOptions.publicKey.rpId,
+      challenge: beginLoginData.getOptions.publicKey.challenge,
+      rpId: beginLoginData.getOptions.publicKey.rpId,
     });
 
     // Finish global login
@@ -863,10 +886,199 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
       }
     );
 
+    // SECURITY: Global login should REJECT users registered with a specific tenant.
+    // Tenant-scoped users must use the tenant-scoped login endpoint (/t/{tenantId}/user/login-webauthn-finish).
+    // This prevents credential leakage across tenant boundaries.
+    expect(finishLoginResponse.status()).toBe(403);
+    const errorData = await finishLoginResponse.json();
+    expect(errorData.error).toContain('tenant');
+
+    await webauthn.cleanup();
+  });
+
+  test('should allow tenant user to login via tenant-scoped login endpoint', async ({
+    page,
+    request: apiRequest,
+  }) => {
+    // This test verifies that tenant-scoped users CAN login via the correct tenant endpoint
+
+    // Initialize WebAuthn and PRF mock BEFORE navigation
+    webauthn = new WebAuthnHelper(page);
+    await webauthn.initialize();
+    await webauthn.injectPrfMock();
+    await webauthn.addPlatformAuthenticator();
+
+    // Navigate to frontend - required for WebAuthn API to work in page.evaluate()
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('domcontentloaded');
+
+    const username = generateTestUsername();
+
+    // First, register a user in the tenant
+    const beginRegResponse = await apiRequest.post(
+      `${BACKEND_URL}/t/${testTenantId}/user/register-webauthn-begin`,
+      {
+        data: { display_name: username },
+      }
+    );
+    expect(beginRegResponse.status()).toBe(200);
+    const beginRegData = await beginRegResponse.json();
+
+    const publicKey = beginRegData.createOptions.publicKey;
+    const userIdB64 = publicKey.user.id.$b64u || publicKey.user.id;
+    const challengeB64 = publicKey.challenge.$b64u || publicKey.challenge;
+
+    // Create and register the credential
+    const registrationCredential = await page.evaluate(async (params) => {
+      function fromBase64Url(b64u: string): Uint8Array {
+        const base64 = b64u.replace(/-/g, '+').replace(/_/g, '/');
+        const paddedBase64 = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+        const binary = atob(paddedBase64);
+        return new Uint8Array([...binary].map(c => c.charCodeAt(0)));
+      }
+
+      function toBase64Url(bytes: Uint8Array): string {
+        const binary = String.fromCharCode(...bytes);
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+      }
+
+      // Generate PRF salt in browser context
+      const prfSalt = crypto.getRandomValues(new Uint8Array(32));
+
+      const createOptions: CredentialCreationOptions = {
+        publicKey: {
+          rp: { id: params.rpId, name: params.rpName },
+          user: {
+            id: fromBase64Url(params.userId),
+            name: params.username,
+            displayName: params.username,
+          },
+          challenge: fromBase64Url(params.challenge),
+          pubKeyCredParams: [
+            { type: 'public-key', alg: -7 },
+            { type: 'public-key', alg: -8 },
+            { type: 'public-key', alg: -257 },
+          ],
+          authenticatorSelection: {
+            requireResidentKey: true,
+            residentKey: 'required',
+            userVerification: 'required',
+          },
+          attestation: 'none',
+          extensions: {
+            prf: {},
+          },
+        },
+      };
+
+      const credential = await navigator.credentials.create(createOptions) as PublicKeyCredential;
+      if (!credential) throw new Error('Failed to create credential');
+
+      const response = credential.response as AuthenticatorAttestationResponse;
+
+      return {
+        id: credential.id,
+        rawId: { '$b64u': toBase64Url(new Uint8Array(credential.rawId)) },
+        type: credential.type,
+        response: {
+          clientDataJSON: { '$b64u': toBase64Url(new Uint8Array(response.clientDataJSON)) },
+          attestationObject: { '$b64u': toBase64Url(new Uint8Array(response.attestationObject)) },
+          transports: response.getTransports?.() || ['internal'],
+        },
+        clientExtensionResults: credential.getClientExtensionResults(),
+      };
+    }, {
+      rpId: publicKey.rp.id,
+      rpName: publicKey.rp.name,
+      userId: userIdB64,
+      username,
+      challenge: challengeB64,
+    });
+
+    // Finish registration
+    const finishRegResponse = await apiRequest.post(
+      `${BACKEND_URL}/t/${testTenantId}/user/register-webauthn-finish`,
+      {
+        data: {
+          challengeId: beginRegData.challengeId,
+          credential: registrationCredential,
+          display_name: username,
+        },
+      }
+    );
+    expect(finishRegResponse.status()).toBe(200);
+
+    // Now test TENANT-SCOPED login (which should succeed)
+    const beginLoginResponse = await apiRequest.post(
+      `${BACKEND_URL}/t/${testTenantId}/user/login-webauthn-begin`,
+      { data: {} }
+    );
+    expect(beginLoginResponse.status()).toBe(200);
+    const beginLoginData = await beginLoginResponse.json();
+
+    const getOptions = beginLoginData.getOptions;
+    const loginChallenge = getOptions.publicKey.challenge.$b64u || getOptions.publicKey.challenge;
+
+    // Get credential assertion
+    const assertionResult = await page.evaluate(async (params) => {
+      function fromBase64Url(b64u: string): Uint8Array {
+        const base64 = b64u.replace(/-/g, '+').replace(/_/g, '/');
+        const paddedBase64 = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+        const binary = atob(paddedBase64);
+        return new Uint8Array([...binary].map(c => c.charCodeAt(0)));
+      }
+
+      function toBase64Url(bytes: Uint8Array): string {
+        const binary = String.fromCharCode(...bytes);
+        return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+      }
+
+      const getOptions: CredentialRequestOptions = {
+        publicKey: {
+          challenge: fromBase64Url(params.challenge),
+          rpId: params.rpId,
+          userVerification: 'required',
+          extensions: { prf: { eval: { first: crypto.getRandomValues(new Uint8Array(32)) } } },
+        },
+      };
+
+      const credential = await navigator.credentials.get(getOptions) as PublicKeyCredential;
+      if (!credential) throw new Error('Failed to get credential');
+
+      const response = credential.response as AuthenticatorAssertionResponse;
+
+      return {
+        id: credential.id,
+        rawId: { '$b64u': toBase64Url(new Uint8Array(credential.rawId)) },
+        type: credential.type,
+        response: {
+          clientDataJSON: { '$b64u': toBase64Url(new Uint8Array(response.clientDataJSON)) },
+          authenticatorData: { '$b64u': toBase64Url(new Uint8Array(response.authenticatorData)) },
+          signature: { '$b64u': toBase64Url(new Uint8Array(response.signature)) },
+          userHandle: response.userHandle ? { '$b64u': toBase64Url(new Uint8Array(response.userHandle)) } : null,
+        },
+        clientExtensionResults: credential.getClientExtensionResults(),
+      };
+    }, {
+      rpId: getOptions.publicKey.rpId,
+      challenge: loginChallenge,
+    });
+
+    // Finish tenant-scoped login
+    const finishLoginResponse = await apiRequest.post(
+      `${BACKEND_URL}/t/${testTenantId}/user/login-webauthn-finish`,
+      {
+        data: {
+          challengeId: beginLoginData.challengeId,
+          credential: assertionResult,
+        },
+      }
+    );
+
     expect(finishLoginResponse.status()).toBe(200);
     const finishLoginData = await finishLoginResponse.json();
 
-    // CRITICAL: Verify tenantId is discovered and returned
+    // Verify tenantId is returned correctly
     expect(finishLoginData.tenantId).toBeDefined();
     expect(finishLoginData.tenantId).toBe(testTenantId);
 
@@ -882,10 +1094,16 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
     request: apiRequest,
   }) => {
     // Register a user via the GLOBAL (non-tenant) registration endpoint
+
+    // Initialize WebAuthn and PRF mock BEFORE navigation
     webauthn = new WebAuthnHelper(page);
     await webauthn.initialize();
     await webauthn.injectPrfMock();
     await webauthn.addPlatformAuthenticator();
+
+    // Navigate to frontend - required for WebAuthn API to work in page.evaluate()
+    await page.goto(FRONTEND_URL);
+    await page.waitForLoadState('domcontentloaded');
 
     const username = generateTestUsername();
 
@@ -931,7 +1149,8 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
           challenge: fromBase64Url(params.publicKeyOptions.challenge),
           pubKeyCredParams: params.publicKeyOptions.pubKeyCredParams,
           authenticatorSelection: params.publicKeyOptions.authenticatorSelection,
-          attestation: params.publicKeyOptions.attestation || 'direct',
+          // Chrome CDP virtual authenticator only produces 'none' attestation
+          attestation: 'none',
           extensions: { prf: { eval: { first: prfSalt } } },
         },
       };
@@ -939,13 +1158,15 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
       const cred = await navigator.credentials.create(createOptions) as PublicKeyCredential;
       const response = cred.response as AuthenticatorAttestationResponse;
 
+      // Return credential data with $b64u format for binary fields
+      // This matches wallet-frontend's jsonStringifyTaggedBinary format
       return {
         type: cred.type,
         id: cred.id,
-        rawId: toBase64Url(new Uint8Array(cred.rawId)),
+        rawId: { $b64u: toBase64Url(new Uint8Array(cred.rawId)) },
         response: {
-          attestationObject: toBase64Url(new Uint8Array(response.attestationObject)),
-          clientDataJSON: toBase64Url(new Uint8Array(response.clientDataJSON)),
+          attestationObject: { $b64u: toBase64Url(new Uint8Array(response.attestationObject)) },
+          clientDataJSON: { $b64u: toBase64Url(new Uint8Array(response.clientDataJSON)) },
           transports: response.getTransports?.() || ['internal'],
         },
         authenticatorAttachment: cred.authenticatorAttachment || 'platform',
@@ -1010,22 +1231,24 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
       const cred = await navigator.credentials.get(getOptions) as PublicKeyCredential;
       const response = cred.response as AuthenticatorAssertionResponse;
 
+      // Return credential data with $b64u format for binary fields
+      // This matches wallet-frontend's jsonStringifyTaggedBinary format
       return {
         type: cred.type,
         id: cred.id,
-        rawId: toBase64Url(new Uint8Array(cred.rawId)),
+        rawId: { $b64u: toBase64Url(new Uint8Array(cred.rawId)) },
         response: {
-          authenticatorData: toBase64Url(new Uint8Array(response.authenticatorData)),
-          clientDataJSON: toBase64Url(new Uint8Array(response.clientDataJSON)),
-          signature: toBase64Url(new Uint8Array(response.signature)),
-          userHandle: response.userHandle ? toBase64Url(new Uint8Array(response.userHandle)) : null,
+          authenticatorData: { $b64u: toBase64Url(new Uint8Array(response.authenticatorData)) },
+          clientDataJSON: { $b64u: toBase64Url(new Uint8Array(response.clientDataJSON)) },
+          signature: { $b64u: toBase64Url(new Uint8Array(response.signature)) },
+          userHandle: response.userHandle ? { $b64u: toBase64Url(new Uint8Array(response.userHandle)) } : null,
         },
         authenticatorAttachment: cred.authenticatorAttachment || 'platform',
         clientExtensionResults: cred.getClientExtensionResults(),
       };
     }, {
-      challenge: beginLoginData.requestOptions.publicKey.challenge,
-      rpId: beginLoginData.requestOptions.publicKey.rpId,
+      challenge: beginLoginData.getOptions.publicKey.challenge,
+      rpId: beginLoginData.getOptions.publicKey.rpId,
     });
 
     const finishLoginResponse = await apiRequest.post(
