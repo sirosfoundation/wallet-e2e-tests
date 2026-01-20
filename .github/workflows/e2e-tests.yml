@@ -191,7 +191,9 @@ jobs:
           # Set paths for CI environment (repos checked out into current directory)
           export FRONTEND_PATH=./wallet-frontend
           export BACKEND_PATH=./go-wallet-backend
-          export DOCKERFILE_PATH=$(pwd)/dockerfiles/frontend.Dockerfile
+          
+          # Copy our Dockerfile.e2e to the frontend directory
+          cp -f dockerfiles/frontend.Dockerfile ./wallet-frontend/Dockerfile.e2e
           
           docker compose -f docker-compose.test.yml up -d --build
           
