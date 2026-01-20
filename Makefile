@@ -171,6 +171,12 @@ test-multi-tenancy: ## Run multi-tenancy tests (requires Admin API)
 		ADMIN_URL=$(ADMIN_URL) \
 		npx playwright test specs/multi-tenancy/
 
+test-critical: ## Run critical path tests (register→login flow) - catches integration bugs
+	@echo "$(GREEN)Running critical path tests...$(NC)"
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		ADMIN_URL=$(ADMIN_URL) \
+		npx playwright test --grep "@critical"
+
 test-discover: ## Run discover-and-trust API tests
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
 		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
