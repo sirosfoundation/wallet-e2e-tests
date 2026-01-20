@@ -10,6 +10,9 @@
  * - go-wallet-backend running on BACKEND_URL (default: http://localhost:8080)
  * - Optional: mock-issuer running on MOCK_ISSUER_URL
  * - Optional: go-trust PDP running on TRUST_PDP_URL
+ *
+ * NOTE: These tests require API version 2+. If the backend doesn't support
+ * the discover-and-trust endpoint, tests will be skipped automatically.
  */
 
 import { test, expect, type APIRequestContext } from '@playwright/test';
@@ -20,15 +23,30 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 const MOCK_ISSUER_URL = process.env.MOCK_ISSUER_URL || 'http://localhost:9000';
 const TRUST_PDP_URL = process.env.TRUST_PDP_URL || 'http://localhost:9090';
 
+// Check if discover-and-trust is available before running tests
+async function isApiVersionSupported(): Promise<boolean> {
+  try {
+    const response = await fetch(`${BACKEND_URL}/status`);
+    if (!response.ok) return false;
+    const status = await response.json();
+    return (status.api_version ?? 1) >= 2;
+  } catch {
+    return false;
+  }
+}
+
 test.describe('API Version Discovery @api @trust', () => {
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
+  let apiVersionSupported: boolean;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext({
       baseURL: BACKEND_URL,
     });
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    // Check API version support upfront
+    apiVersionSupported = await isApiVersionSupported();
   });
 
   test.afterAll(async () => {
@@ -36,6 +54,8 @@ test.describe('API Version Discovery @api @trust', () => {
   });
 
   test('status endpoint returns api_version field', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const status = await trustApi.getStatus();
 
     expect(status.status).toBe('ok');
@@ -45,6 +65,8 @@ test.describe('API Version Discovery @api @trust', () => {
   });
 
   test('api_version is 2 or higher for discover-and-trust support', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const version = await trustApi.getApiVersion();
 
     // API version 2 adds discover-and-trust endpoint
@@ -52,6 +74,8 @@ test.describe('API Version Discovery @api @trust', () => {
   });
 
   test('isDiscoverAndTrustAvailable returns true for API v2+', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const available = await trustApi.isDiscoverAndTrustAvailable();
 
     expect(available).toBe(true);
@@ -61,12 +85,14 @@ test.describe('API Version Discovery @api @trust', () => {
 test.describe('Discover and Trust - Authentication @api @trust', () => {
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
+  let apiVersionSupported: boolean;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext({
       baseURL: BACKEND_URL,
     });
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
   });
 
   test.afterAll(async () => {
@@ -74,6 +100,8 @@ test.describe('Discover and Trust - Authentication @api @trust', () => {
   });
 
   test('discover-and-trust requires authentication', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     // Don't set auth token
     trustApi.clearAuthToken();
 
@@ -90,12 +118,14 @@ test.describe('Discover and Trust - Authentication @api @trust', () => {
 test.describe('Discover and Trust - Input Validation @api @trust', () => {
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
+  let apiVersionSupported: boolean;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext({
       baseURL: BACKEND_URL,
     });
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
     // Note: These tests check validation which happens before auth check
     // Some backends may return 401 first, adjust expectations accordingly
   });
@@ -105,6 +135,8 @@ test.describe('Discover and Trust - Input Validation @api @trust', () => {
   });
 
   test('rejects request with missing entity_identifier', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const response = await request.post(`${BACKEND_URL}/discover-and-trust`, {
       data: {
         role: 'issuer',
@@ -118,6 +150,8 @@ test.describe('Discover and Trust - Input Validation @api @trust', () => {
   });
 
   test('rejects request with missing role', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const response = await request.post(`${BACKEND_URL}/discover-and-trust`, {
       data: {
         entity_identifier: 'https://issuer.example.com',
@@ -130,6 +164,8 @@ test.describe('Discover and Trust - Input Validation @api @trust', () => {
   });
 
   test('rejects request with invalid role', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const response = await request.post(`${BACKEND_URL}/discover-and-trust`, {
       data: {
         entity_identifier: 'https://issuer.example.com',
@@ -146,12 +182,14 @@ test.describe('Discover and Trust - Response Structure @api @trust', () => {
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
+  let apiVersionSupported: boolean;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext({
       baseURL: BACKEND_URL,
     });
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     // Generate a test user with a valid JWT token
     // The token is signed with the same secret used by the test backend
@@ -164,6 +202,8 @@ test.describe('Discover and Trust - Response Structure @api @trust', () => {
   });
 
   test('issuer discovery returns correct response structure', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const { response, status } = await trustApi.discoverAndTrustIssuer(
       'https://issuer.example.com'
     );
@@ -178,6 +218,8 @@ test.describe('Discover and Trust - Response Structure @api @trust', () => {
   });
 
   test('verifier discovery returns correct response structure', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const { response, status } = await trustApi.discoverAndTrustVerifier(
       'https://verifier.example.com'
     );
@@ -193,6 +235,8 @@ test.describe('Discover and Trust - Response Structure @api @trust', () => {
   });
 
   test('credential_type is passed through to evaluation', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const { response, status } = await trustApi.discoverAndTrustIssuer(
       'https://issuer.example.com',
       'eu.europa.ec.eudi.pid.1'
@@ -208,10 +252,12 @@ test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', 
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
   let mockIssuerAvailable = false;
+  let apiVersionSupported: boolean;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     // Generate a test user with a valid JWT token
     testUser = createTestUser();
@@ -231,6 +277,7 @@ test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', 
   });
 
   test('discovers mock issuer metadata successfully', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!mockIssuerAvailable, 'Mock issuer not available');
 
     const { response, status } = await trustApi.discoverAndTrustIssuer(MOCK_ISSUER_URL);
@@ -241,6 +288,7 @@ test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', 
   });
 
   test('evaluates trust for mock issuer', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!mockIssuerAvailable, 'Mock issuer not available');
 
     const { response, status } = await trustApi.discoverAndTrustIssuer(MOCK_ISSUER_URL);
@@ -252,6 +300,7 @@ test.describe('Discover and Trust - Mock Issuer Integration @api @trust @mock', 
   });
 
   test('returns trusted_certificates when issuer has IACA', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!mockIssuerAvailable, 'Mock issuer not available');
 
     const { response, status } = await trustApi.discoverAndTrustIssuer(MOCK_ISSUER_URL);
@@ -274,10 +323,12 @@ test.describe('Discover and Trust - go-trust PDP Integration @api @trust @pdp', 
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
   let pdpAvailable = false;
+  let apiVersionSupported: boolean;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     // Generate a test user with a valid JWT token
     testUser = createTestUser();
@@ -308,6 +359,7 @@ test.describe('Discover and Trust - go-trust PDP Integration @api @trust @pdp', 
   });
 
   test('trusted issuer returns trusted=true via PDP', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!pdpAvailable, 'go-trust PDP not available');
 
     // Use a known trusted issuer configured in the PDP
@@ -324,6 +376,7 @@ test.describe('Discover and Trust - go-trust PDP Integration @api @trust @pdp', 
   });
 
   test('untrusted issuer returns trusted=false via PDP', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!pdpAvailable, 'go-trust PDP not available');
 
     // Use a known untrusted issuer

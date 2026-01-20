@@ -20,6 +20,18 @@ const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 const MOCK_VERIFIER_URL = process.env.MOCK_VERIFIER_URL || 'http://localhost:9001';
 const MOCK_PDP_URL = process.env.MOCK_PDP_URL || 'http://localhost:9091';
 
+// Check if discover-and-trust is available before running tests
+async function isApiVersionSupported(): Promise<boolean> {
+  try {
+    const response = await fetch(`${BACKEND_URL}/status`);
+    if (!response.ok) return false;
+    const status = await response.json();
+    return (status.api_version ?? 1) >= 2;
+  } catch {
+    return false;
+  }
+}
+
 test.describe('Verifier Trust - Mock Verifier Availability @api @trust @verifier', () => {
   let request: APIRequestContext;
 
@@ -73,10 +85,12 @@ test.describe('Verifier Trust - Discovery and Trust Evaluation @api @trust @veri
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
   let mockVerifierAvailable = false;
+  let apiVersionSupported = false;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     // Generate a test user with a valid JWT token
     testUser = createTestUser();
@@ -96,6 +110,7 @@ test.describe('Verifier Trust - Discovery and Trust Evaluation @api @trust @veri
   });
 
   test('discovers mock verifier via discover-and-trust API', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!mockVerifierAvailable, 'Mock verifier not available');
 
     const { response, status } = await trustApi.discoverAndTrustVerifier(MOCK_VERIFIER_URL);
@@ -109,6 +124,7 @@ test.describe('Verifier Trust - Discovery and Trust Evaluation @api @trust @veri
   });
 
   test('evaluates trust for mock verifier', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!mockVerifierAvailable, 'Mock verifier not available');
 
     const { response, status } = await trustApi.discoverAndTrustVerifier(MOCK_VERIFIER_URL);
@@ -120,6 +136,7 @@ test.describe('Verifier Trust - Discovery and Trust Evaluation @api @trust @veri
   });
 
   test('evaluates trust with credential type parameter', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!mockVerifierAvailable, 'Mock verifier not available');
 
     const { response, status } = await trustApi.discoverAndTrustVerifier(
@@ -137,10 +154,12 @@ test.describe('Verifier Trust - Untrusted Verifier @api @trust @verifier', () =>
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
+  let apiVersionSupported = false;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     // Generate a test user with a valid JWT token
     testUser = createTestUser();
@@ -152,6 +171,7 @@ test.describe('Verifier Trust - Untrusted Verifier @api @trust @verifier', () =>
   });
 
   test('unknown verifier returns appropriate trust response', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     // Use a verifier URL that is NOT in the PDP's explicit trusted list
     // Note: The mock PDP may have fallback policies that trust localhost URLs
     const unknownVerifier = 'https://unknown-verifier.example.com';
@@ -165,6 +185,7 @@ test.describe('Verifier Trust - Untrusted Verifier @api @trust @verifier', () =>
   });
 
   test('verifier on different port may have different trust status', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     // Use a verifier on a port that may or may not be explicitly trusted
     // The mock PDP trusts localhost URLs by default for dev convenience
     const differentPort = 'http://localhost:9999';
@@ -183,10 +204,12 @@ test.describe('Verifier Trust - PDP Integration @api @trust @verifier @pdp', () 
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
   let pdpAvailable = false;
+  let apiVersionSupported = false;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     // Generate a test user with a valid JWT token
     testUser = createTestUser();
@@ -216,6 +239,7 @@ test.describe('Verifier Trust - PDP Integration @api @trust @verifier @pdp', () 
   });
 
   test('PDP evaluates verifier trust correctly', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!pdpAvailable, 'Mock PDP not available');
 
     // The mock PDP is configured with TRUSTED_VERIFIERS=http://localhost:9001
@@ -230,6 +254,7 @@ test.describe('Verifier Trust - PDP Integration @api @trust @verifier @pdp', () 
   });
 
   test('PDP evaluates verifier not in explicit list', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     test.skip(!pdpAvailable, 'Mock PDP not available');
 
     // This verifier is not in the TRUSTED_VERIFIERS list
@@ -249,10 +274,12 @@ test.describe('Verifier Trust - Response Structure @api @trust @verifier', () =>
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
+  let apiVersionSupported = false;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     testUser = createTestUser();
     trustApi.setAuthToken(testUser.token);
@@ -263,6 +290,8 @@ test.describe('Verifier Trust - Response Structure @api @trust @verifier', () =>
   });
 
   test('verifier response has all required fields', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const { response, status } = await trustApi.discoverAndTrustVerifier(
       'https://verifier.example.com'
     );
@@ -277,6 +306,8 @@ test.describe('Verifier Trust - Response Structure @api @trust @verifier', () =>
   });
 
   test('verifier response includes optional verifier_metadata when discovered', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const { response, status } = await trustApi.discoverAndTrustVerifier(MOCK_VERIFIER_URL);
 
     expect(status).toBe(200);
@@ -289,6 +320,8 @@ test.describe('Verifier Trust - Response Structure @api @trust @verifier', () =>
   });
 
   test('verifier response does NOT include issuer_metadata', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const { response, status } = await trustApi.discoverAndTrustVerifier(
       'https://verifier.example.com'
     );
@@ -304,10 +337,12 @@ test.describe('Verifier Trust - Error Handling @api @trust @verifier', () => {
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
+  let apiVersionSupported = false;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     testUser = createTestUser();
     trustApi.setAuthToken(testUser.token);
@@ -318,6 +353,8 @@ test.describe('Verifier Trust - Error Handling @api @trust @verifier', () => {
   });
 
   test('handles invalid verifier URL gracefully', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const { response, status } = await trustApi.discoverAndTrustVerifier('not-a-valid-url');
 
     expect(status).toBe(200);
@@ -327,6 +364,8 @@ test.describe('Verifier Trust - Error Handling @api @trust @verifier', () => {
   });
 
   test('handles unreachable verifier gracefully', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     const { response, status } = await trustApi.discoverAndTrustVerifier(
       'https://unreachable.example.com'
     );
@@ -342,10 +381,12 @@ test.describe('Verifier Trust - Comparison with Issuer Trust @api @trust @verifi
   let request: APIRequestContext;
   let trustApi: TrustApiHelper;
   let testUser: TestUser;
+  let apiVersionSupported = false;
 
   test.beforeAll(async ({ playwright }) => {
     request = await playwright.request.newContext();
     trustApi = new TrustApiHelper(request, BACKEND_URL);
+    apiVersionSupported = await isApiVersionSupported();
 
     testUser = createTestUser();
     trustApi.setAuthToken(testUser.token);
@@ -356,6 +397,8 @@ test.describe('Verifier Trust - Comparison with Issuer Trust @api @trust @verifi
   });
 
   test('same endpoint handles both issuer and verifier roles', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
+    
     // Issuer request
     const issuerResult = await trustApi.discoverAndTrustIssuer('https://example.com');
     expect(issuerResult.status).toBe(200);
@@ -370,6 +413,7 @@ test.describe('Verifier Trust - Comparison with Issuer Trust @api @trust @verifi
   });
 
   test('issuer and verifier trust are evaluated independently', async () => {
+    test.skip(!apiVersionSupported, 'Requires API version 2+ (discover-and-trust support)');
     // An entity might be trusted as an issuer but not as a verifier
     // Test that the PDP evaluates them separately
 
