@@ -707,12 +707,12 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
     await webauthn.cleanup();
   });
 
-  test('should allow tenant user to login via global login endpoint and return tenantId', async ({
+  test('should reject tenant user from global login endpoint (security boundary)', async ({
     page,
     request: apiRequest,
   }) => {
-    // This test verifies that global login works for tenant users and returns their tenantId
-    // This provides backward compatibility and allows the frontend to detect user's tenant
+    // This test requires a registered user to exist
+    // We'll register a new user first, then test global login
 
     // Initialize WebAuthn and PRF mock BEFORE navigation
     webauthn = new WebAuthnHelper(page);
@@ -886,22 +886,12 @@ test.describe('Tenant ID in Login/Registration Responses @multi-tenancy', () => 
       }
     );
 
-    // Global login endpoint SUPPORTS tenant users - it decodes the tenant-scoped
-    // user handle and returns the tenantId in the response. This allows the frontend
-    // to detect the user's tenant and redirect appropriately.
-    // 
-    // The security model is:
-    // - Global login works for all users (backward compatible)
-    // - Response includes tenantId so frontend knows user's tenant context
-    // - Frontend should redirect to tenant-scoped paths for non-default tenants
-    expect(finishLoginResponse.status()).toBe(200);
-    const loginData = await finishLoginResponse.json();
-    
-    // Verify the tenant ID is returned correctly
-    expect(loginData.tenantId).toBeDefined();
-    expect(loginData.tenantId).toBe(testTenantId);
-    expect(loginData.uuid).toBeDefined();
-    expect(loginData.appToken).toBeDefined();
+    // SECURITY: Global login should REJECT users registered with a specific tenant.
+    // Tenant-scoped users must use the tenant-scoped login endpoint (/t/{tenantId}/user/login-webauthn-finish).
+    // This prevents credential leakage across tenant boundaries.
+    expect(finishLoginResponse.status()).toBe(403);
+    const errorData = await finishLoginResponse.json();
+    expect(errorData.error).toContain('tenant');
 
     await webauthn.cleanup();
   });
