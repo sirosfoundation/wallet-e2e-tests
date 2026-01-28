@@ -21,6 +21,7 @@ We propose a **three-tier testing strategy**:
 
 ### Tier 2: Real Browser Integration Tests (Headed Mode)
 - Run Playwright in headed mode with software authenticator
+- Uses `soft-fido2` UHID virtual authenticator on Linux
 - Uses Chrome's `--enable-features=WebAuthenticationMacPlatformAuthenticator` on macOS
 - Uses Windows Hello software mode on Windows
 - Tests real WebAuthn browser stack without hardware
@@ -33,7 +34,81 @@ We propose a **three-tier testing strategy**:
 
 ---
 
-## Tier 2 Implementation: Software Platform Authenticator
+## Tier 2 Implementation: soft-fido2 Virtual Authenticator (Linux)
+
+### Overview
+
+On Linux, we use [soft-fido2](https://github.com/pando85/soft-fido2) to create a UHID virtual FIDO2 authenticator. This appears to the browser as a real USB security key, providing complete CTAP2 protocol support including:
+
+- Discoverable credentials (resident keys)
+- User verification (auto-approved for testing)
+- hmac-secret extension (for WebAuthn PRF)
+- Full credential management
+
+### Setup
+
+1. **Install UHID kernel module and permissions**:
+   ```bash
+   sudo modprobe uhid
+   sudo usermod -a -G fido $USER
+   echo 'KERNEL=="uhid", GROUP="fido", MODE="0660"' | sudo tee /etc/udev/rules.d/90-uhid.rules
+   sudo udevadm control --reload-rules
+   # Log out and back in for group membership to take effect
+   ```
+
+2. **Build soft-fido2**:
+   ```bash
+   cd /path/to/soft-fido2
+   cargo build --release -p soft-fido2 --example virtual_authenticator
+   ```
+
+### Usage with E2E Tests
+
+The test environment automatically manages soft-fido2 when `SOFT_FIDO2_PATH` is set:
+
+```bash
+# Start all services including soft-fido2
+SOFT_FIDO2_PATH=/path/to/soft-fido2 \
+FRONTEND_PATH=/path/to/wallet-frontend \
+BACKEND_PATH=/path/to/go-wallet-backend \
+make up
+
+# Check status (shows soft-fido2 status)
+make status
+
+# Run real WebAuthn tests
+make test-real-webauthn
+
+# Stop everything including soft-fido2
+make down
+```
+
+### Manual Control
+
+You can also manage soft-fido2 separately:
+
+```bash
+# Start soft-fido2 only
+SOFT_FIDO2_PATH=/path/to/soft-fido2 make start-soft-fido2
+
+# Stop soft-fido2 only
+make stop-soft-fido2
+
+# View soft-fido2 logs
+tail -f /tmp/soft-fido2.log
+```
+
+### How It Works
+
+1. `scripts/start-soft-fido2.sh` starts the virtual authenticator as a background daemon
+2. The authenticator creates a UHID device that appears as USB to the OS
+3. Chrome/Chromium detects it as an external security key
+4. The authenticator auto-approves all user presence/verification requests
+5. Credentials are stored in memory (ephemeral per test run)
+
+---
+
+## Tier 2 Implementation: Software Platform Authenticator (macOS/Windows)
 
 ### Approach: Chrome Software Authenticator Mode
 

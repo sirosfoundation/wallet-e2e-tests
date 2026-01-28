@@ -5,11 +5,17 @@
 #   make run        # Run all E2E tests
 #   make down       # Stop test environment
 #   make ci-docker  # Full CI: up, run, down
+#
+# For real WebAuthn tests with soft-fido2:
+#   SOFT_FIDO2_PATH=/path/to/soft-fido2 make up
+#   make test-real-webauthn
+#   make down
 
 .PHONY: help install test test-headed test-debug test-ui \
-        test-prf test-registration test-login test-trust test-verifier \
+        test-trust test-verifier test-multi-tenancy test-real-webauthn \
         up down logs run ci-docker status \
-        clean clean-all check-servers
+        clean clean-all check-servers \
+        start-soft-fido2 stop-soft-fido2
 
 # Configuration
 FRONTEND_URL ?= http://localhost:3000
@@ -20,6 +26,11 @@ MOCK_VERIFIER_URL ?= http://localhost:9001
 MOCK_PDP_URL ?= http://localhost:9091
 TEST_COMPOSE_FILE := docker-compose.test.yml
 ADMIN_TOKEN ?= e2e-test-admin-token-for-testing-purposes-only
+
+# soft-fido2 virtual authenticator (optional, for real WebAuthn tests)
+SOFT_FIDO2_PATH ?=
+SOFT_FIDO2_PID ?= /tmp/soft-fido2.pid
+SOFT_FIDO2_LOG ?= /tmp/soft-fido2.log
 
 # Colors
 GREEN := \033[0;32m
@@ -35,12 +46,18 @@ help: ## Show this help
 	@echo "  make run      # Run tests"
 	@echo "  make down     # Stop services"
 	@echo ""
+	@echo "Real WebAuthn with soft-fido2:"
+	@echo "  SOFT_FIDO2_PATH=/path/to/soft-fido2 make up"
+	@echo "  make test-real-webauthn"
+	@echo "  make down"
+	@echo ""
 	@echo "Configuration:"
 	@echo "  FRONTEND_URL    = $(FRONTEND_URL)"
 	@echo "  BACKEND_URL     = $(BACKEND_URL)"
 	@echo "  ADMIN_URL       = $(ADMIN_URL)"
 	@echo "  MOCK_ISSUER_URL = $(MOCK_ISSUER_URL)"
 	@echo "  MOCK_PDP_URL    = $(MOCK_PDP_URL)"
+	@echo "  SOFT_FIDO2_PATH = $(SOFT_FIDO2_PATH)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-18s$(NC) %s\n", $$1, $$2}'
@@ -56,10 +73,29 @@ install: ## Install dependencies and Playwright
 	@echo "$(GREEN)Ready!$(NC)"
 
 # =============================================================================
+# soft-fido2 Virtual Authenticator
+# =============================================================================
+
+start-soft-fido2: ## Start soft-fido2 virtual authenticator (requires SOFT_FIDO2_PATH)
+	@if [ -z "$(SOFT_FIDO2_PATH)" ]; then \
+		echo "$(YELLOW)SOFT_FIDO2_PATH not set, skipping virtual authenticator$(NC)"; \
+	else \
+		SOFT_FIDO2_PATH=$(SOFT_FIDO2_PATH) \
+		SOFT_FIDO2_PID=$(SOFT_FIDO2_PID) \
+		SOFT_FIDO2_LOG=$(SOFT_FIDO2_LOG) \
+		./scripts/start-soft-fido2.sh; \
+	fi
+
+stop-soft-fido2: ## Stop soft-fido2 virtual authenticator
+	@SOFT_FIDO2_PID=$(SOFT_FIDO2_PID) \
+	SOFT_FIDO2_LOG=$(SOFT_FIDO2_LOG) \
+	./scripts/stop-soft-fido2.sh
+
+# =============================================================================
 # Docker Compose Test Environment
 # =============================================================================
 
-up: ## Start test environment (frontend + backend + mocks)
+up: start-soft-fido2 ## Start test environment (frontend + backend + mocks + soft-fido2)
 	@echo "$(GREEN)Starting test environment...$(NC)"
 	@# Copy our Dockerfile to the frontend context before build
 	@cp -f dockerfiles/frontend.Dockerfile $(FRONTEND_PATH)/Dockerfile.e2e 2>/dev/null || true
@@ -81,7 +117,7 @@ up: ## Start test environment (frontend + backend + mocks)
 	@curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null || (echo "$(RED)Mock verifier not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null || (echo "$(RED)Mock PDP not ready$(NC)"; exit 1)
 
-down: ## Stop test environment
+down: stop-soft-fido2 ## Stop test environment (including soft-fido2)
 	@echo "$(YELLOW)Stopping test environment...$(NC)"
 	-@docker compose -f $(TEST_COMPOSE_FILE) down -v 2>/dev/null || true
 	@echo "$(GREEN)Services stopped$(NC)"
@@ -106,6 +142,11 @@ status: ## Check status of test services
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1 && \
 		echo "  $(GREEN)✓$(NC) Mock PDP: $(MOCK_PDP_URL)" || \
 		echo "  $(RED)✗$(NC) Mock PDP: $(MOCK_PDP_URL)"
+	@if [ -f "$(SOFT_FIDO2_PID)" ] && kill -0 $$(cat "$(SOFT_FIDO2_PID)") 2>/dev/null; then \
+		echo "  $(GREEN)✓$(NC) soft-fido2: running (PID: $$(cat $(SOFT_FIDO2_PID)))"; \
+	else \
+		echo "  $(YELLOW)-$(NC) soft-fido2: not running"; \
+	fi
 
 # =============================================================================
 # Test Execution
@@ -142,18 +183,6 @@ test-ui: ## Open Playwright UI
 		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test --ui
 
-test-prf: ## Run PRF tests only
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		npx playwright test --grep "@prf"
-
-test-registration: ## Run registration tests only
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		npx playwright test --grep "@registration"
-
-test-login: ## Run login tests only
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		npx playwright test --grep "@login"
-
 test-trust: ## Run trust API tests only (issuer and verifier)
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
 		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
@@ -171,11 +200,7 @@ test-multi-tenancy: ## Run multi-tenancy tests (requires Admin API)
 		ADMIN_URL=$(ADMIN_URL) \
 		npx playwright test specs/multi-tenancy/
 
-test-critical: ## Run critical path tests (register→login flow) - catches integration bugs
-	@echo "$(GREEN)Running critical path tests...$(NC)"
-	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		ADMIN_URL=$(ADMIN_URL) \
-		npx playwright test --grep "@critical"
+test-critical: test-real-webauthn ## Run critical path tests (alias for test-real-webauthn)
 
 test-urls: ## Run tenant-aware URL routing tests
 	@echo "$(GREEN)Running tenant-aware URL tests...$(NC)"
@@ -193,8 +218,8 @@ test-discover: ## Run discover-and-trust API tests
 # Real WebAuthn Tests (No CDP Mocking)
 # =============================================================================
 
-test-real-webauthn: ## Run real WebAuthn integration tests (requires X11 or Xvfb)
-	@echo "$(GREEN)Running real WebAuthn integration tests...$(NC)"
+test-real-webauthn: ## Run real WebAuthn user flow tests (requires X11 or Xvfb)
+	@echo "$(GREEN)Running real WebAuthn user flow tests...$(NC)"
 	@echo "  Note: These tests use headed browser - requires display"
 	@curl -sf $(FRONTEND_URL) >/dev/null || \
 		(echo "$(RED)Frontend not running. Run 'make up' first.$(NC)"; exit 1)
@@ -202,11 +227,7 @@ test-real-webauthn: ## Run real WebAuthn integration tests (requires X11 or Xvfb
 		(echo "$(RED)Backend not running. Run 'make up' first.$(NC)"; exit 1)
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
 		ADMIN_URL=$(ADMIN_URL) \
-		npx playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/integration.spec.ts
-
-test-real-webauthn-basic: ## Run basic real WebAuthn tests (no services required)
-	@echo "$(GREEN)Running basic real WebAuthn tests...$(NC)"
-	npx playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/multi-tenant-login.spec.ts
+		npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
 
 # Run real WebAuthn tests with Xvfb (for headless CI)
 test-real-webauthn-ci: ## Run real WebAuthn tests with virtual display (CI mode)
@@ -218,14 +239,14 @@ test-real-webauthn-ci: ## Run real WebAuthn tests with virtual display (CI mode)
 	xvfb-run -a --server-args="-screen 0 1920x1080x24" \
 		env FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
 		ADMIN_URL=$(ADMIN_URL) \
-		npx playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/integration.spec.ts
+		npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
 
 ci-real-webauthn: up ## Full CI: start services, run real WebAuthn tests with Xvfb, cleanup
 	@echo "$(GREEN)Running real WebAuthn CI tests...$(NC)"
 	-xvfb-run -a --server-args="-screen 0 1920x1080x24" \
 		env FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
 		ADMIN_URL=$(ADMIN_URL) \
-		npx playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/integration.spec.ts; \
+		npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list; \
 	result=$$?; \
 	$(MAKE) down; \
 	exit $$result
