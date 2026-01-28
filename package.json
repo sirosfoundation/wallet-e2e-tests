@@ -12,10 +12,20 @@
     "test:prf": "playwright test --grep '@prf'",
     "test:registration": "playwright test --grep '@registration'",
     "test:login": "playwright test --grep '@login'",
-    "test:matrix": "./scripts/run-matrix.sh"
+    "test:matrix": "./scripts/run-matrix.sh",
+    "test:webauthn": "playwright test specs/webauthn/",
+    "test:webauthn:headed": "playwright test specs/webauthn/ --headed",
+    "test:tenant-redirect": "playwright test specs/webauthn/tenant-redirect.spec.ts",
+    "test:softfido": "playwright test specs/softfido/ --headed",
+    "test:softfido:debug": "playwright test specs/softfido/ --headed --debug",
+    "test:real-webauthn": "playwright test --config=playwright.real-webauthn.config.ts",
+    "test:real-webauthn:debug": "playwright test --config=playwright.real-webauthn.config.ts --debug",
+    "test:real-webauthn:ui": "playwright test --config=playwright.real-webauthn.config.ts --ui",
+    "test:all": "npm run test && npm run test:real-webauthn"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
+    "dotenv": "^16.4.5",
     "typescript": "^5.1.6"
   },
   "engines": {

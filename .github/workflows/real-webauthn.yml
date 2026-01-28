@@ -1,0 +1,176 @@
+# Real WebAuthn E2E Tests
+#
+# This workflow runs WebAuthn tests in headed mode with Xvfb,
+# using Chrome's software authenticator instead of CDP virtual authenticators.
+#
+# This catches bugs that CDP mocking misses, such as:
+# - PRF extension returning empty results
+# - User handle extraction issues
+# - Discoverable credential flow problems
+
+name: Real WebAuthn Tests
+
+on:
+  # Run on PRs to catch issues before merge
+  pull_request:
+    paths:
+      - 'specs/real-webauthn/**'
+      - 'helpers/real-webauthn.ts'
+      - 'playwright.real-webauthn.config.ts'
+      - '.github/workflows/real-webauthn.yml'
+
+  # Run on pushes to main
+  push:
+    branches:
+      - main
+    paths:
+      - 'specs/real-webauthn/**'
+      - 'helpers/real-webauthn.ts'
+      - 'playwright.real-webauthn.config.ts'
+
+  # Allow manual triggering
+  workflow_dispatch:
+    inputs:
+      debug:
+        description: 'Enable debug mode'
+        type: boolean
+        default: false
+
+jobs:
+  real-webauthn-tests:
+    name: Real WebAuthn Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Install Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      # Start Xvfb for headed browser tests
+      - name: Start Xvfb
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+          sleep 2
+
+      # Note: These tests require backend/frontend services
+      # For now, we run the browser support checks which don't need services
+      - name: Run Real WebAuthn Tests
+        run: |
+          # Run tests that don't require backend services
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            npx playwright test --config=playwright.real-webauthn.config.ts \
+            --grep "Browser Support|User Handle" \
+            --reporter=html
+        env:
+          DISPLAY: ':99'
+          FRONTEND_URL: 'http://localhost:3000'
+          BACKEND_URL: 'http://localhost:8080'
+
+      - name: Upload Test Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: real-webauthn-report
+          path: playwright-report-real-webauthn/
+          retention-days: 14
+
+      - name: Upload Test Results
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: real-webauthn-results
+          path: test-results-real-webauthn/
+          retention-days: 7
+
+  # Full integration tests with services (optional, requires more setup)
+  full-integration:
+    name: Full Integration (with services)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Only run on workflow_dispatch with debug enabled, or on main branch
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+
+    services:
+      # Note: You would need to set up your backend/frontend services here
+      # This is a placeholder showing the structure
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_USER: wallet
+          POSTGRES_PASSWORD: wallet
+          POSTGRES_DB: wallet
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Install Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Start Xvfb
+        run: |
+          Xvfb :99 -screen 0 1920x1080x24 &
+          echo "DISPLAY=:99" >> $GITHUB_ENV
+          sleep 2
+
+      # TODO: Start backend and frontend services
+      # This would typically use docker-compose or similar
+      # - name: Start Services
+      #   run: docker-compose -f docker-compose.test.yml up -d
+
+      - name: Run Full Real WebAuthn Tests
+        run: |
+          xvfb-run --auto-servernum --server-args="-screen 0 1920x1080x24" \
+            npx playwright test --config=playwright.real-webauthn.config.ts \
+            --reporter=html
+        env:
+          DISPLAY: ':99'
+          FRONTEND_URL: 'http://localhost:3000'
+          BACKEND_URL: 'http://localhost:8080'
+
+      - name: Upload Test Report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: full-integration-report
+          path: playwright-report-real-webauthn/
+          retention-days: 14

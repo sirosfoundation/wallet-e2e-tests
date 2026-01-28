@@ -3,7 +3,9 @@ node_modules/
 
 # Test outputs
 test-results/
+test-results-*/
 playwright-report/
+playwright-report-*/
 playwright/.cache/
 
 # CI artifacts (downloaded from GitHub Actions)

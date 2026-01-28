@@ -177,11 +177,58 @@ test-critical: ## Run critical path tests (register→login flow) - catches inte
 		ADMIN_URL=$(ADMIN_URL) \
 		npx playwright test --grep "@critical"
 
+test-urls: ## Run tenant-aware URL routing tests
+	@echo "$(GREEN)Running tenant-aware URL tests...$(NC)"
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		ADMIN_URL=$(ADMIN_URL) \
+		npx playwright test specs/multi-tenancy/tenant-aware-urls.spec.ts
+
 test-discover: ## Run discover-and-trust API tests
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
 		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
 		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test specs/api/discover-and-trust.spec.ts
+
+# =============================================================================
+# Real WebAuthn Tests (No CDP Mocking)
+# =============================================================================
+
+test-real-webauthn: ## Run real WebAuthn integration tests (requires X11 or Xvfb)
+	@echo "$(GREEN)Running real WebAuthn integration tests...$(NC)"
+	@echo "  Note: These tests use headed browser - requires display"
+	@curl -sf $(FRONTEND_URL) >/dev/null || \
+		(echo "$(RED)Frontend not running. Run 'make up' first.$(NC)"; exit 1)
+	@curl -sf $(BACKEND_URL)/status >/dev/null || \
+		(echo "$(RED)Backend not running. Run 'make up' first.$(NC)"; exit 1)
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		ADMIN_URL=$(ADMIN_URL) \
+		npx playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/integration.spec.ts
+
+test-real-webauthn-basic: ## Run basic real WebAuthn tests (no services required)
+	@echo "$(GREEN)Running basic real WebAuthn tests...$(NC)"
+	npx playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/multi-tenant-login.spec.ts
+
+# Run real WebAuthn tests with Xvfb (for headless CI)
+test-real-webauthn-ci: ## Run real WebAuthn tests with virtual display (CI mode)
+	@echo "$(GREEN)Running real WebAuthn tests with Xvfb...$(NC)"
+	@command -v xvfb-run >/dev/null 2>&1 || \
+		(echo "$(RED)xvfb-run not found. Install xvfb: apt-get install xvfb$(NC)"; exit 1)
+	@curl -sf $(FRONTEND_URL) >/dev/null || \
+		(echo "$(RED)Frontend not running. Run 'make up' first.$(NC)"; exit 1)
+	xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+		env FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		ADMIN_URL=$(ADMIN_URL) \
+		npx playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/integration.spec.ts
+
+ci-real-webauthn: up ## Full CI: start services, run real WebAuthn tests with Xvfb, cleanup
+	@echo "$(GREEN)Running real WebAuthn CI tests...$(NC)"
+	-xvfb-run -a --server-args="-screen 0 1920x1080x24" \
+		env FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		ADMIN_URL=$(ADMIN_URL) \
+		npx playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/integration.spec.ts; \
+	result=$$?; \
+	$(MAKE) down; \
+	exit $$result
 
 ci-docker: up ## Full CI: start services, run tests, cleanup
 	@echo "$(GREEN)Running tests...$(NC)"

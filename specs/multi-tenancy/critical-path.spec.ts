@@ -146,6 +146,8 @@ async function performTenantRegistration(
 /**
  * Helper to perform login via global WebAuthn endpoint
  * (tenant is discovered from the passkey's userHandle)
+ * NOTE: This only works for default tenant users. Non-default tenant users
+ * must use performTenantLogin with the tenant-scoped endpoint.
  */
 async function performGlobalLogin(
   page: Page,
@@ -242,6 +244,105 @@ async function performGlobalLogin(
   };
 }
 
+/**
+ * Helper to perform login via tenant-scoped WebAuthn endpoint
+ * Required for non-default tenant users.
+ */
+async function performTenantLogin(
+  page: Page,
+  apiRequest: APIRequestContext,
+  tenantId: string
+): Promise<{
+  userId: string;
+  token: string;
+  tenantId: string;
+}> {
+  // Step 1: Begin tenant-scoped login
+  const beginResponse = await apiRequest.post(
+    `${BACKEND_URL}/t/${tenantId}/user/login-webauthn-begin`,
+    { data: {} }
+  );
+
+  if (beginResponse.status() !== 200) {
+    const errorText = await beginResponse.text();
+    throw new Error(`Begin tenant login failed: ${beginResponse.status()} - ${errorText}`);
+  }
+
+  const beginData = await beginResponse.json();
+  const getOptions = beginData.getOptions;
+  const challengeB64 = getOptions.publicKey.challenge.$b64u || getOptions.publicKey.challenge;
+
+  // Step 2: Get credential assertion
+  const assertionResult = await page.evaluate(async (params) => {
+    function fromBase64Url(b64u: string): Uint8Array {
+      const base64 = b64u.replace(/-/g, '+').replace(/_/g, '/');
+      const paddedBase64 = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+      const binary = atob(paddedBase64);
+      return new Uint8Array([...binary].map(c => c.charCodeAt(0)));
+    }
+
+    function toBase64Url(bytes: Uint8Array): string {
+      const binary = String.fromCharCode(...bytes);
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+    }
+
+    const getOptions: CredentialRequestOptions = {
+      publicKey: {
+        challenge: fromBase64Url(params.challenge),
+        rpId: params.rpId,
+        userVerification: 'required',
+      },
+    };
+
+    const credential = await navigator.credentials.get(getOptions) as PublicKeyCredential;
+    if (!credential) throw new Error('Failed to get credential');
+
+    const response = credential.response as AuthenticatorAssertionResponse;
+
+    return {
+      id: credential.id,
+      rawId: { '$b64u': toBase64Url(new Uint8Array(credential.rawId)) },
+      type: credential.type,
+      response: {
+        clientDataJSON: { '$b64u': toBase64Url(new Uint8Array(response.clientDataJSON)) },
+        authenticatorData: { '$b64u': toBase64Url(new Uint8Array(response.authenticatorData)) },
+        signature: { '$b64u': toBase64Url(new Uint8Array(response.signature)) },
+        userHandle: response.userHandle
+          ? { '$b64u': toBase64Url(new Uint8Array(response.userHandle)) }
+          : null,
+      },
+      clientExtensionResults: credential.getClientExtensionResults(),
+    };
+  }, {
+    rpId: getOptions.publicKey.rpId,
+    challenge: challengeB64,
+  });
+
+  // Step 3: Finish tenant login
+  const finishResponse = await apiRequest.post(
+    `${BACKEND_URL}/t/${tenantId}/user/login-webauthn-finish`,
+    {
+      data: {
+        challengeId: beginData.challengeId,
+        credential: assertionResult,
+      },
+    }
+  );
+
+  if (finishResponse.status() !== 200) {
+    const errorText = await finishResponse.text();
+    throw new Error(`Finish tenant login failed: ${finishResponse.status()} - ${errorText}`);
+  }
+
+  const finishData = await finishResponse.json();
+
+  return {
+    userId: finishData.uuid,
+    token: finishData.appToken,
+    tenantId: finishData.tenantId,
+  };
+}
+
 test.describe('Critical Path: Tenant Registration → Login @multi-tenancy @critical', () => {
   let tenantApi: TenantApiHelper;
   let webauthn: WebAuthnHelper;
@@ -320,8 +421,9 @@ test.describe('Critical Path: Tenant Registration → Login @multi-tenancy @crit
 
     // STEP 2: Immediately attempt login with the same credential
     // This is the critical step that catches bugs in credential storage/retrieval
+    // Non-default tenants must use tenant-scoped login endpoint
     console.log('Attempting login with registered credential...');
-    const login = await performGlobalLogin(page, apiRequest);
+    const login = await performTenantLogin(page, apiRequest, testTenantId);
 
     // Verify login succeeded
     expect(login.userId).toBeDefined();
@@ -346,8 +448,8 @@ test.describe('Critical Path: Tenant Registration → Login @multi-tenancy @crit
     const registrationA = await performTenantRegistration(page, apiRequest, testTenantId, usernameA);
     expect(registrationA.userId).toBeDefined();
 
-    // Login as user A
-    const loginA = await performGlobalLogin(page, apiRequest);
+    // Login as user A (using tenant-scoped endpoint)
+    const loginA = await performTenantLogin(page, apiRequest, testTenantId);
     expect(loginA.userId).toBe(registrationA.userId);
 
     // Clear the authenticator and register user B
@@ -358,8 +460,8 @@ test.describe('Critical Path: Tenant Registration → Login @multi-tenancy @crit
     expect(registrationB.userId).toBeDefined();
     expect(registrationB.userId).not.toBe(registrationA.userId); // Different user
 
-    // Login as user B
-    const loginB = await performGlobalLogin(page, apiRequest);
+    // Login as user B (using tenant-scoped endpoint)
+    const loginB = await performTenantLogin(page, apiRequest, testTenantId);
     expect(loginB.userId).toBe(registrationB.userId);
     expect(loginB.tenantId).toBe(testTenantId);
   });
@@ -380,7 +482,8 @@ test.describe('Critical Path: Tenant Registration → Login @multi-tenancy @crit
     await page.waitForLoadState('domcontentloaded');
 
     // Login should still work (credential persists in virtual authenticator)
-    const login = await performGlobalLogin(page, apiRequest);
+    // Non-default tenants must use tenant-scoped login endpoint
+    const login = await performTenantLogin(page, apiRequest, testTenantId);
     expect(login.userId).toBe(registration.userId);
     expect(login.tenantId).toBe(testTenantId);
   });
@@ -438,8 +541,8 @@ test.describe('Critical Path: Cross-Tenant Isolation @multi-tenancy @critical', 
     const registrationA = await performTenantRegistration(page, apiRequest, tenantA, userA);
     expect(registrationA.tenantId).toBe(tenantA);
 
-    // Login and verify tenant A is discovered
-    const loginA = await performGlobalLogin(page, apiRequest);
+    // Login using tenant-scoped endpoint (required for non-default tenants)
+    const loginA = await performTenantLogin(page, apiRequest, tenantA);
     expect(loginA.userId).toBe(registrationA.userId);
     expect(loginA.tenantId).toBe(tenantA);
 
@@ -450,8 +553,8 @@ test.describe('Critical Path: Cross-Tenant Isolation @multi-tenancy @critical', 
     const registrationB = await performTenantRegistration(page, apiRequest, tenantB, userB);
     expect(registrationB.tenantId).toBe(tenantB);
 
-    // Login and verify tenant B is discovered
-    const loginB = await performGlobalLogin(page, apiRequest);
+    // Login using tenant-scoped endpoint (required for non-default tenants)
+    const loginB = await performTenantLogin(page, apiRequest, tenantB);
     expect(loginB.userId).toBe(registrationB.userId);
     expect(loginB.tenantId).toBe(tenantB);
 
