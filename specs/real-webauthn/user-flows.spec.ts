@@ -510,7 +510,7 @@ test.describe('Frontend Endpoint Construction Verification', () => {
    * These tests use route interception to verify paths while using real UI interactions.
    */
 
-  test('should construct tenant-scoped endpoints when on tenant login page', async ({ page }) => {
+  test('should use global endpoints for tenant login (backend discovers tenant)', async ({ page }) => {
     const testTenantId = generateTestTenantId('endpoint-test');
     await createTenant(testTenantId);
 
@@ -552,11 +552,11 @@ test.describe('Frontend Endpoint Construction Verification', () => {
 
       capture.stop();
 
-      // Verify tenant-scoped endpoint was used
+      // Verify global endpoint was used (backend discovers tenant from passkey)
       console.log('Captured paths:', capture.paths);
       const beginPath = capture.paths.find((p) => p.includes('login-webauthn-begin'));
-      expect(beginPath).toContain(`/t/${testTenantId}/`);
-      console.log(`✓ begin path is tenant-scoped: ${beginPath}`);
+      expect(beginPath).toBe('/user/login-webauthn-begin');
+      console.log(`✓ begin path is global (tenant discovered from passkey): ${beginPath}`);
     } finally {
       await deleteTenant(testTenantId);
     }
@@ -672,11 +672,11 @@ test.describe('Cross-Tenant Credential Isolation', () => {
 test.describe('Tenant API Error Handling', () => {
   test('should return 404 for registration with non-existent tenant', async ({ request: apiRequest }) => {
     // This test uses direct API call since it's testing backend error handling
-    // (no UI exists for non-existent tenants)
+    // Registration uses global endpoint with tenantId in request body
     const response = await apiRequest.post(
-      `${BACKEND_URL}/t/this-tenant-does-not-exist/user/register-webauthn-begin`,
+      `${BACKEND_URL}/user/register-webauthn-begin`,
       {
-        data: { display_name: 'Test User' },
+        data: { tenantId: 'this-tenant-does-not-exist' },
       }
     );
 
