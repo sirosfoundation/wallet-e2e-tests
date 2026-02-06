@@ -90,8 +90,9 @@ async function registerUserViaUI(
   error?: string;
 }> {
   // Navigate to the correct login/signup page
+  // Default tenant uses root paths, custom tenants use /id/ prefix
   const loginUrl = options.tenantId
-    ? `${FRONTEND_URL}/${options.tenantId}/login`
+    ? `${FRONTEND_URL}/id/${options.tenantId}/login`
     : `${FRONTEND_URL}/login`;
 
   await page.goto(loginUrl);
@@ -246,8 +247,9 @@ async function loginUserViaUI(
   status?: number;
 }> {
   // Navigate to the correct login page
+  // Default tenant uses root paths, custom tenants use /id/ prefix
   const loginUrl = options.tenantId
-    ? `${FRONTEND_URL}/${options.tenantId}/login`
+    ? `${FRONTEND_URL}/id/${options.tenantId}/login`
     : `${FRONTEND_URL}/login`;
 
   await page.goto(loginUrl);
@@ -541,7 +543,7 @@ test.describe('Frontend Endpoint Construction Verification', () => {
       const capture = await captureEndpointPaths(page, '**/user/login-webauthn-*');
 
       // Navigate to tenant login and click login
-      await page.goto(`${FRONTEND_URL}/${testTenantId}/login`);
+      await page.goto(`${FRONTEND_URL}/id/${testTenantId}/login`);
       await page.waitForLoadState('networkidle');
       await page.waitForTimeout(1000);
 
@@ -733,14 +735,14 @@ test.describe('Tenant-Aware URL Routing', () => {
     await createTenant(tenantId);
 
     try {
-      // Frontend uses /{tenantId}/login, not /t/{tenantId}/login
-      await page.goto(`${FRONTEND_URL}/${tenantId}/login`);
+      // Frontend uses /id/{tenantId}/login for custom tenants
+      await page.goto(`${FRONTEND_URL}/id/${tenantId}/login`);
       await page.waitForLoadState('networkidle');
 
       const url = page.url();
-      expect(url).toContain(`/${tenantId}`);
+      expect(url).toContain(`/id/${tenantId}`);
 
-      console.log(`✓ Custom tenant uses scoped path: ${url}`);
+      console.log(`✓ Custom tenant uses /id/ prefix path: ${url}`);
     } finally {
       await deleteTenant(tenantId);
     }
@@ -752,12 +754,12 @@ test.describe('Tenant-Aware URL Routing', () => {
 
     try {
       // Access tenant route without auth
-      await page.goto(`${FRONTEND_URL}/${tenantId}/`);
+      await page.goto(`${FRONTEND_URL}/id/${tenantId}/`);
       await page.waitForLoadState('networkidle');
 
       const url = page.url();
-      // URL should contain the tenant ID
-      expect(url).toContain(`/${tenantId}`);
+      // URL should contain the tenant ID with /id/ prefix
+      expect(url).toContain(`/id/${tenantId}`);
 
       console.log(`✓ Tenant context preserved in URL: ${url}`);
     } finally {
