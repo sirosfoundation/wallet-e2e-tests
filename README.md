@@ -8,27 +8,38 @@ End-to-end tests for the wallet stack (`wallet-frontend` + `go-wallet-backend`) 
 
 This repository provides:
 
-1. **E2E test suite** for wallet-frontend and go-wallet-backend integration
-2. **Reusable GitHub Action** for CI/CD pipelines
-3. **PRF mock** that works around Chrome CDP limitations
-4. **Multi-tenancy tests** for tenant isolation verification
-5. **Trust API tests** for discover and trust functionality
+1. **Real WebAuthn E2E tests** using soft-fido2 virtual FIDO2 authenticator
+2. **Multi-tenancy tests** for header-based tenant isolation (X-Tenant-ID)
+3. **API compatibility tests** for discover and trust functionality
+4. **Reusable GitHub Action** for CI/CD pipelines
 
-## Quick Start
+## Quick Start (Real WebAuthn Tests)
+
+**Prerequisites:**
+- Linux with UHID kernel module (for soft-fido2)
+- Docker and Docker Compose
+- X11 display (or Xvfb for headless)
 
 ```bash
-# Install dependencies
+# 1. Install dependencies
 make install
 
-# Start test environment
-make up
+# 2. Start test environment with soft-fido2 virtual authenticator
+SOFT_FIDO2_PATH=/path/to/soft-fido2 make up
 
-# Run all tests
-make run
+# 3. Run real WebAuthn tests (requires display - runs in headed mode)
+make test-real-webauthn
 
-# Stop environment
+# 4. Stop environment
 make down
 ```
+
+For **CI environments** without a display:
+```bash
+make test-real-webauthn-ci  # Uses Xvfb
+```
+
+See [REAL_WEBAUTHN_TESTING.md](REAL_WEBAUTHN_TESTING.md) for detailed soft-fido2 setup instructions.
 
 ## CI/CD Integration
 
@@ -112,63 +123,66 @@ make run FRONTEND_URL=http://custom:3000 BACKEND_URL=http://custom:8080
 
 ```
 wallet-e2e-tests/
-├── .github/workflows/     # GitHub Actions
-│   ├── e2e-tests.yml      # Reusable workflow
-│   └── self-test.yml      # Self-test on push
+├── .github/workflows/           # GitHub Actions
+│   ├── e2e-tests.yml            # Reusable workflow
+│   └── self-test.yml            # Self-test on push
 ├── docs/
-│   └── CI.md              # CI integration guide
+│   ├── CI.md                    # CI integration guide
+│   └── discover-and-trust-tests.md
 ├── helpers/
-│   └── webauthn.ts        # WebAuthn/PRF helper
+│   ├── real-webauthn.ts         # Real WebAuthn helper
+│   ├── tenant-api.ts            # Admin tenant API helper
+│   ├── issuer-api.ts            # Admin issuer API helper
+│   └── trust-api.ts             # Trust API helper
+├── mocks/                       # Mock services (issuer, verifier, PDP)
 ├── specs/
-│   ├── api/               # API tests (discover, trust, verifier)
-│   ├── authenticated/     # Authenticated flow tests
-│   ├── diagnostics/       # Diagnostic tests
-│   ├── full-flow/         # Complete flow tests
-│   ├── login/             # Login tests
-│   ├── multi-tenancy/     # Multi-tenancy tests
-│   ├── prf/               # PRF mock tests
-│   └── registration/      # Registration tests
+│   ├── api/                     # API tests (discover, trust, admin)
+│   └── real-webauthn/           # Real WebAuthn user flow tests
 ├── scripts/
-│   ├── run-matrix.sh      # Version matrix testing
-│   └── setup-local.sh     # Local dev setup
-├── docker-compose.yml         # Docker configuration
-├── docker-compose.test.yml    # Full test environment
-├── Makefile                   # Build automation
-└── playwright.config.ts       # Playwright config
+│   ├── start-soft-fido2.sh      # Start soft-fido2 daemon
+│   └── stop-soft-fido2.sh       # Stop soft-fido2 daemon
+├── docker-compose.test.yml      # Full test environment
+├── Makefile                     # Build automation
+├── playwright.config.ts         # Default Playwright config
+├── playwright.real-webauthn.config.ts  # Real WebAuthn config (headed)
+└── REAL_WEBAUTHN_TESTING.md     # Detailed soft-fido2 documentation
 ```
 
 ## Test Categories
 
-Tests are organized by functionality:
+| Directory | Description | Config |
+|-----------|-------------|--------|
+| `specs/real-webauthn/` | Full user flows with real WebAuthn (soft-fido2) | `playwright.real-webauthn.config.ts` |
+| `specs/api/` | API tests (discover, trust, admin, compatibility) | `playwright.config.ts` |
 
-| Directory | Description |
-|-----------|-------------|
-| `specs/api/` | API tests (discover, trust, verifier) |
-| `specs/multi-tenancy/` | Tenant isolation tests |
-| `specs/registration/` | Registration flow tests |
-| `specs/login/` | Login flow tests |
-| `specs/prf/` | PRF extension tests |
-| `specs/full-flow/` | Complete flow tests |
-
-Run specific tests with Playwright grep:
+### Running Specific Tests
 
 ```bash
-npx playwright test --grep "@multi-tenancy"
+# Real WebAuthn tests (requires soft-fido2 and display)
+make test-real-webauthn
+
+# API-only tests (headless, no soft-fido2 needed)
 npx playwright test specs/api/
+
+# Specific test file
+npx playwright test specs/api/discover-and-trust.spec.ts
 ```
 
-## PRF Mock
+## Real WebAuthn with soft-fido2
 
-Chrome's CDP virtual authenticator reports `hasPrf=true` but returns empty PRF results. The PRF mock patches the WebAuthn API to compute actual HMAC-SHA256 outputs:
+The primary test approach uses **real browser WebAuthn** with the soft-fido2 UHID virtual authenticator. This provides:
 
-```typescript
-test.beforeEach(async ({ page }) => {
-  webauthn = new WebAuthnHelper(page);
-  await webauthn.initialize();
-  await webauthn.injectPrfMock();  // CRITICAL: Before navigation
-  await webauthn.addPlatformAuthenticator();
-});
-```
+- Full CTAP2 protocol support (no mocking)
+- Real hmac-secret extension (WebAuthn PRF works correctly)
+- Discoverable credentials (resident keys)
+- Actual browser → authenticator interaction
+
+**Key advantages over CDP virtual authenticators:**
+- Tests exercise the real browser WebAuthn stack
+- PRF extension works correctly (CDP returns empty results)
+- Same code path as real hardware authenticators
+
+See [REAL_WEBAUTHN_TESTING.md](REAL_WEBAUTHN_TESTING.md) for setup and architecture details.
 
 ## Environment Variables
 
@@ -194,13 +208,18 @@ WALLET_JWT_SECRET=test-secret-for-e2e-testing-minimum-32-chars
 
 ## Troubleshooting
 
-### PRF outputs are empty
+### soft-fido2 not starting
 
-Call `injectPrfMock()` **before** any page navigation.
+1. Ensure UHID kernel module is loaded: `sudo modprobe uhid`
+2. Add user to fido group: `sudo usermod -a -G fido $USER`
+3. Check permissions: `ls -la /dev/uhid`
+4. View logs: `tail -f /tmp/soft-fido2.log`
 
 ### WebAuthn ceremony fails
 
-Ensure `RP_ORIGIN` matches the frontend URL exactly.
+1. Ensure `RP_ORIGIN` matches the frontend URL exactly
+2. Check soft-fido2 is running: `make status`
+3. Verify browser can see the authenticator (check browser WebAuthn settings)
 
 ### Tests timeout
 
@@ -208,6 +227,12 @@ WebAuthn tests need extra time. The config uses:
 - `fullyParallel: false`
 - `workers: 1`
 - `timeout: 60000`
+
+### No browser window appears
+
+Real WebAuthn tests require headed mode. Use:
+- `make test-real-webauthn` (needs X11 display)
+- `make test-real-webauthn-ci` (uses Xvfb virtual display)
 
 ## License
 
