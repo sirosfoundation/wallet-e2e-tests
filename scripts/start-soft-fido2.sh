@@ -9,15 +9,16 @@
 # Prerequisites:
 #   - Linux with UHID support (modprobe uhid)
 #   - User in 'fido' group with UHID permissions
-#   - soft-fido2 built: cargo build --release -p soft-fido2 --example virtual_authenticator
+#   - Rust/Cargo installed (for building soft-fido2)
 #
 # Usage:
 #   SOFT_FIDO2_PATH=/path/to/soft-fido2 ./scripts/start-soft-fido2.sh
 #
 # Environment:
-#   SOFT_FIDO2_PATH - Path to the soft-fido2 repository (required)
-#   SOFT_FIDO2_LOG  - Log file path (default: /tmp/soft-fido2.log)
-#   SOFT_FIDO2_PID  - PID file path (default: /tmp/soft-fido2.pid)
+#   SOFT_FIDO2_PATH    - Path to the soft-fido2 repository (required)
+#   SOFT_FIDO2_LOG     - Log file path (default: /tmp/soft-fido2.log)
+#   SOFT_FIDO2_PID     - PID file path (default: /tmp/soft-fido2.pid)
+#   SOFT_FIDO2_REBUILD - Set to 1 to force rebuild even if binary exists
 
 set -e
 
@@ -49,6 +50,12 @@ fi
 
 # Path to the binary
 BINARY="$SOFT_FIDO2_PATH/target/release/examples/virtual_authenticator"
+
+# Force rebuild if SOFT_FIDO2_REBUILD is set
+if [ "${SOFT_FIDO2_REBUILD:-0}" = "1" ] && [ -x "$BINARY" ]; then
+    echo -e "${YELLOW}Rebuilding soft-fido2 (SOFT_FIDO2_REBUILD=1)...${NC}"
+    (cd "$SOFT_FIDO2_PATH" && cargo build --release -p soft-fido2 --example virtual_authenticator)
+fi
 
 # Check if binary exists, try to build if not
 if [ ! -x "$BINARY" ]; then

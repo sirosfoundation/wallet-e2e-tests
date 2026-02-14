@@ -1,15 +1,17 @@
 # Wallet E2E Tests Makefile
 #
-# Usage:
-#   make up         # Start test environment (Docker)
-#   make run        # Run all E2E tests
-#   make down       # Stop test environment
-#   make ci-docker  # Full CI: up, run, down
+# Quick Start (assumes workspace layout with sibling directories):
+#   make up      # Start fresh environment (soft-fido2 + Docker services)
+#   make test    # Run real WebAuthn tests (default)
+#   make down    # Stop everything
 #
-# For real WebAuthn tests with soft-fido2:
-#   SOFT_FIDO2_PATH=/path/to/soft-fido2 make up
-#   make test-real-webauthn
-#   make down
+# The Makefile assumes the following workspace layout:
+#   ../soft-fido2        - Virtual FIDO2 authenticator
+#   ../wallet-frontend   - React frontend
+#   ../go-wallet-backend - Go backend
+#
+# Override paths if needed:
+#   make up SOFT_FIDO2_PATH=/custom/path FRONTEND_PATH=/custom/frontend
 
 .PHONY: help install test test-headed test-debug test-ui \
         test-trust test-verifier test-multi-tenancy test-real-webauthn \
@@ -17,7 +19,7 @@
         clean clean-all check-servers \
         start-soft-fido2 stop-soft-fido2
 
-# Configuration
+# Configuration - URLs
 FRONTEND_URL ?= http://localhost:3000
 BACKEND_URL ?= http://localhost:8080
 ADMIN_URL ?= http://localhost:8081
@@ -27,8 +29,12 @@ MOCK_PDP_URL ?= http://localhost:9091
 TEST_COMPOSE_FILE := docker-compose.test.yml
 ADMIN_TOKEN ?= e2e-test-admin-token-for-testing-purposes-only
 
-# soft-fido2 virtual authenticator (optional, for real WebAuthn tests)
-SOFT_FIDO2_PATH ?=
+# Workspace paths - defaults assume sibling directories
+SOFT_FIDO2_PATH ?= ../soft-fido2
+FRONTEND_PATH ?= ../wallet-frontend
+BACKEND_PATH ?= ../go-wallet-backend
+
+# soft-fido2 runtime files
 SOFT_FIDO2_PID ?= /tmp/soft-fido2.pid
 SOFT_FIDO2_LOG ?= /tmp/soft-fido2.log
 
@@ -39,25 +45,22 @@ RED := \033[0;31m
 NC := \033[0m
 
 help: ## Show this help
-	@echo "Wallet E2E Tests"
+	@echo "Wallet E2E Tests (Real WebAuthn with soft-fido2)"
 	@echo ""
 	@echo "Quick Start:"
-	@echo "  make up       # Start all services"
-	@echo "  make run      # Run tests"
-	@echo "  make down     # Stop services"
+	@echo "  make up       # Start fresh environment (rebuilds Docker images)"
+	@echo "  make test     # Run real WebAuthn tests (default target)"
+	@echo "  make down     # Stop services and soft-fido2"
 	@echo ""
-	@echo "Real WebAuthn with soft-fido2:"
-	@echo "  SOFT_FIDO2_PATH=/path/to/soft-fido2 make up"
-	@echo "  make test-real-webauthn"
-	@echo "  make down"
+	@echo "Workspace Paths (override with VAR=value):"
+	@echo "  SOFT_FIDO2_PATH = $(SOFT_FIDO2_PATH)"
+	@echo "  FRONTEND_PATH   = $(FRONTEND_PATH)"
+	@echo "  BACKEND_PATH    = $(BACKEND_PATH)"
 	@echo ""
-	@echo "Configuration:"
+	@echo "Service URLs:"
 	@echo "  FRONTEND_URL    = $(FRONTEND_URL)"
 	@echo "  BACKEND_URL     = $(BACKEND_URL)"
 	@echo "  ADMIN_URL       = $(ADMIN_URL)"
-	@echo "  MOCK_ISSUER_URL = $(MOCK_ISSUER_URL)"
-	@echo "  MOCK_PDP_URL    = $(MOCK_PDP_URL)"
-	@echo "  SOFT_FIDO2_PATH = $(SOFT_FIDO2_PATH)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-18s$(NC) %s\n", $$1, $$2}'
@@ -95,11 +98,14 @@ stop-soft-fido2: ## Stop soft-fido2 virtual authenticator
 # Docker Compose Test Environment
 # =============================================================================
 
-up: start-soft-fido2 ## Start test environment (frontend + backend + mocks + soft-fido2)
-	@echo "$(GREEN)Starting test environment...$(NC)"
+up: start-soft-fido2 ## Start fresh test environment (rebuilds all Docker images)
+	@echo "$(GREEN)Starting test environment (no-cache rebuild)...$(NC)"
 	@# Copy our Dockerfile to the frontend context before build
 	@cp -f dockerfiles/frontend.Dockerfile $(FRONTEND_PATH)/Dockerfile.e2e 2>/dev/null || true
-	docker compose -f $(TEST_COMPOSE_FILE) up -d --build
+	FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) build --no-cache
+	FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) up -d
 	@echo "$(GREEN)Waiting for services to be healthy...$(NC)"
 	@for i in $$(seq 1 120); do \
 		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
@@ -163,7 +169,7 @@ run: ## Run all E2E tests (requires 'make up' first)
 		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test
 
-test: run ## Alias for 'run'
+test: test-real-webauthn ## Run real WebAuthn tests (default target)
 
 test-headed: ## Run tests with visible browser
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
@@ -271,4 +277,4 @@ clean: ## Remove test artifacts
 clean-all: clean ## Remove all generated files
 	rm -rf node_modules/
 
-.DEFAULT_GOAL := help
+.DEFAULT_GOAL := test
