@@ -116,13 +116,10 @@ const authorizationServerMetadata = {
   dpop_signing_alg_values_supported: ['ES256'],
 };
 
-// IACA certificates response
+// IACA certificates response - format must match wallet's MdocIacasResponseSchema
+// The schema expects: { iacas: [{ certificate: string }] }
 const iacaCertificates = {
-  certificates: [TEST_IACA_CERTIFICATE],
-  metadata: {
-    issuer: ISSUER_ID,
-    updated: new Date().toISOString(),
-  },
+  iacas: [{ certificate: TEST_IACA_CERTIFICATE }],
 };
 
 function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {

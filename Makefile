@@ -15,7 +15,7 @@
 
 .PHONY: help install test test-headed test-debug test-ui \
         test-trust test-verifier test-multi-tenancy test-real-webauthn \
-        up down logs run ci-docker status \
+        up down logs run ci-docker status register-mocks \
         clean clean-all check-servers \
         start-soft-fido2 stop-soft-fido2
 
@@ -122,6 +122,36 @@ up: start-soft-fido2 ## Start fresh test environment (rebuilds all Docker images
 	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null || (echo "$(RED)Mock issuer not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null || (echo "$(RED)Mock verifier not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null || (echo "$(RED)Mock PDP not ready$(NC)"; exit 1)
+	@# Register mock issuer and verifier with the wallet backend via admin API
+	@echo "$(GREEN)Registering mock issuer and verifier...$(NC)"
+	@$(MAKE) register-mocks
+
+register-mocks: ## Register mock issuer and verifier with wallet backend
+	@# Register mock issuer (ignore conflict if already exists)
+	@# Include client_id which wallet uses for OAuth authorization requests
+	@curl -sf -X POST $(ADMIN_URL)/admin/tenants/default/issuers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" \
+		-H "Content-Type: application/json" \
+		-d '{"credential_issuer_identifier": "$(MOCK_ISSUER_URL)", "client_id": "wallet-e2e-client", "visible": true}' \
+		>/dev/null 2>&1 || true
+	@# Verify issuer registered
+	@curl -sf $(ADMIN_URL)/admin/tenants/default/issuers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" | \
+		grep -q "$(MOCK_ISSUER_URL)" && \
+		echo "  $(GREEN)✓$(NC) Mock Issuer registered: $(MOCK_ISSUER_URL)" || \
+		echo "  $(RED)✗$(NC) Failed to register mock issuer"
+	@# Register mock verifier (ignore conflict if already exists)
+	@curl -sf -X POST $(ADMIN_URL)/admin/tenants/default/verifiers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" \
+		-H "Content-Type: application/json" \
+		-d '{"name": "E2E Mock Verifier", "url": "$(MOCK_VERIFIER_URL)"}' \
+		>/dev/null 2>&1 || true
+	@# Verify verifier registered
+	@curl -sf $(ADMIN_URL)/admin/tenants/default/verifiers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" | \
+		grep -q "$(MOCK_VERIFIER_URL)" && \
+		echo "  $(GREEN)✓$(NC) Mock Verifier registered: $(MOCK_VERIFIER_URL)" || \
+		echo "  $(RED)✗$(NC) Failed to register mock verifier"
 
 down: stop-soft-fido2 ## Stop test environment (including soft-fido2)
 	@echo "$(YELLOW)Stopping test environment...$(NC)"
@@ -153,6 +183,18 @@ status: ## Check status of test services
 	else \
 		echo "  $(YELLOW)-$(NC) soft-fido2: not running"; \
 	fi
+	@echo ""
+	@echo "Registered Entities:"
+	@curl -sf $(ADMIN_URL)/admin/tenants/default/issuers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" 2>/dev/null | \
+		grep -q "$(MOCK_ISSUER_URL)" && \
+		echo "  $(GREEN)✓$(NC) Issuer: $(MOCK_ISSUER_URL)" || \
+		echo "  $(YELLOW)-$(NC) Issuer: not registered"
+	@curl -sf $(ADMIN_URL)/admin/tenants/default/verifiers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" 2>/dev/null | \
+		grep -q "$(MOCK_VERIFIER_URL)" && \
+		echo "  $(GREEN)✓$(NC) Verifier: $(MOCK_VERIFIER_URL)" || \
+		echo "  $(YELLOW)-$(NC) Verifier: not registered"
 
 # =============================================================================
 # Test Execution
@@ -169,7 +211,7 @@ run: ## Run all E2E tests (requires 'make up' first)
 		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test
 
-test: test-real-webauthn ## Run real WebAuthn tests (default target)
+test: test-real-webauthn test-credential-flow ## Run real WebAuthn and credential flow tests
 
 test-headed: ## Run tests with visible browser
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
@@ -232,8 +274,21 @@ test-real-webauthn: ## Run real WebAuthn user flow tests (requires X11 or Xvfb)
 	@curl -sf $(BACKEND_URL)/status >/dev/null || \
 		(echo "$(RED)Backend not running. Run 'make up' first.$(NC)"; exit 1)
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		ADMIN_URL=$(ADMIN_URL) \
+		ADMIN_URL=$(ADMIN_URL) ISSUER_URL=$(MOCK_ISSUER_URL) VERIFIER_URL=$(MOCK_VERIFIER_URL) \
 		npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
+
+test-credential-flow: ## Run credential issuance and verification flow tests
+	@echo "$(GREEN)Running credential flow tests...$(NC)"
+	@curl -sf $(FRONTEND_URL) >/dev/null || \
+		(echo "$(RED)Frontend not running. Run 'make up' first.$(NC)"; exit 1)
+	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null || \
+		(echo "$(RED)Mock issuer not running. Run 'make up' first.$(NC)"; exit 1)
+	@curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null || \
+		(echo "$(RED)Mock verifier not running. Run 'make up' first.$(NC)"; exit 1)
+	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
+		ADMIN_URL=$(ADMIN_URL) ISSUER_URL=$(MOCK_ISSUER_URL) VERIFIER_URL=$(MOCK_VERIFIER_URL) \
+		npx playwright test --config=playwright.real-webauthn.config.ts \
+			specs/real-webauthn/credential-flow.spec.ts --reporter=list
 
 # Run real WebAuthn tests with Xvfb (for headless CI)
 test-real-webauthn-ci: ## Run real WebAuthn tests with virtual display (CI mode)
@@ -244,14 +299,14 @@ test-real-webauthn-ci: ## Run real WebAuthn tests with virtual display (CI mode)
 		(echo "$(RED)Frontend not running. Run 'make up' first.$(NC)"; exit 1)
 	xvfb-run -a --server-args="-screen 0 1920x1080x24" \
 		env FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		ADMIN_URL=$(ADMIN_URL) \
+		ADMIN_URL=$(ADMIN_URL) ISSUER_URL=$(MOCK_ISSUER_URL) VERIFIER_URL=$(MOCK_VERIFIER_URL) \
 		npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
 
 ci-real-webauthn: up ## Full CI: start services, run real WebAuthn tests with Xvfb, cleanup
 	@echo "$(GREEN)Running real WebAuthn CI tests...$(NC)"
 	-xvfb-run -a --server-args="-screen 0 1920x1080x24" \
 		env FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \
-		ADMIN_URL=$(ADMIN_URL) \
+		ADMIN_URL=$(ADMIN_URL) ISSUER_URL=$(MOCK_ISSUER_URL) VERIFIER_URL=$(MOCK_VERIFIER_URL) \
 		npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list; \
 	result=$$?; \
 	$(MAKE) down; \

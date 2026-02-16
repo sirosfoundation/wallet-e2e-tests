@@ -21,11 +21,18 @@
     "test:real-webauthn": "playwright test --config=playwright.real-webauthn.config.ts",
     "test:real-webauthn:debug": "playwright test --config=playwright.real-webauthn.config.ts --debug",
     "test:real-webauthn:ui": "playwright test --config=playwright.real-webauthn.config.ts --ui",
-    "test:all": "npm run test && npm run test:real-webauthn"
+    "test:credential-flow": "playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/credential-flow.spec.ts",
+    "test:credential-flow:debug": "playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/credential-flow.spec.ts --debug",
+    "test:all": "npm run test && npm run test:real-webauthn",
+    "mock:issuer": "npx ts-node mocks/issuer/full-flow-issuer.ts",
+    "mock:verifier": "npx ts-node mocks/verifier/full-flow-verifier.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
+    "@types/node": "^22.10.0",
     "dotenv": "^16.4.5",
+    "jose": "^5.9.6",
+    "ts-node": "^10.9.2",
     "typescript": "^5.1.6"
   },
   "engines": {

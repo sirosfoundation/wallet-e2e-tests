@@ -8,12 +8,15 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "outDir": "./dist",
-    "rootDir": "./"
+    "rootDir": "./",
+    "types": ["node"]
   },
   "include": [
     "helpers/**/*.ts",
     "specs/**/*.ts",
-    "playwright.config.ts"
+    "mocks/**/*.ts",
+    "playwright.config.ts",
+    "playwright.real-webauthn.config.ts"
   ],
   "exclude": [
     "node_modules"
