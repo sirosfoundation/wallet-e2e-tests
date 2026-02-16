@@ -676,11 +676,12 @@ test.describe('Cross-Tenant Credential Isolation', () => {
 test.describe('Tenant API Error Handling', () => {
   test('should return 404 for registration with non-existent tenant', async ({ request: apiRequest }) => {
     // This test uses direct API call since it's testing backend error handling
-    // Registration uses global endpoint with tenantId in request body
+    // Per ADR-011, tenant is specified via X-Tenant-ID header (not request body)
     const response = await apiRequest.post(
       `${BACKEND_URL}/user/register-webauthn-begin`,
       {
-        data: { tenantId: 'this-tenant-does-not-exist' },
+        headers: { 'X-Tenant-ID': 'this-tenant-does-not-exist' },
+        data: {},
       }
     );
 
