@@ -47,8 +47,23 @@ async function registerUserViaUI(
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1000);
 
+  // Track API responses and errors
   let finishResponse: any = null;
   let apiError: string | undefined;
+  const pageErrors: string[] = [];
+
+  // Capture page errors
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message);
+    console.log(`[PAGE ERROR] ${error.message}`);
+  });
+
+  // Capture console errors
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      console.log(`[CONSOLE ERROR] ${msg.text()}`);
+    }
+  });
 
   page.on('response', async (response) => {
     const url = response.url();
@@ -60,7 +75,16 @@ async function registerUserViaUI(
         } else {
           apiError = data.error || `HTTP ${response.status()}`;
         }
-      } catch {}
+      } catch {
+        // Ignore JSON parse errors
+      }
+    } else if (url.includes('register-webauthn-begin') && !response.ok()) {
+      try {
+        const data = await response.json();
+        apiError = data.error || `Begin failed: HTTP ${response.status()}`;
+      } catch {
+        apiError = `Begin failed: HTTP ${response.status()}`;
+      }
     }
   });
 
@@ -77,41 +101,69 @@ async function registerUserViaUI(
   await nameInput.fill(options.username);
 
   // Click security-key signup button
+  // soft-fido2 presents as a USB HID authenticator, not a platform authenticator
   const signupButton = page.locator('[id*="signUpPasskey"][id*="security-key"][id*="submit"]');
   await expect(signupButton).toBeVisible({ timeout: 10000 });
 
   const WEBAUTHN_TIMEOUT = 20000;
   
   try {
+    // Start waiting for the finish response before clicking
     const responsePromise = page.waitForResponse(
       (response) => response.url().includes('register-webauthn-finish'),
-      { timeout: WEBAUTHN_TIMEOUT * 2 }
+      { timeout: WEBAUTHN_TIMEOUT * 2 } // Allow time for PRF retry
     );
     
     await signupButton.click();
+    
+    // Wait for the first WebAuthn ceremony to complete
     await page.waitForTimeout(3000);
     
-    // Handle PRF retry dialog if it appears
+    // Check if PRF retry dialog appeared ("Almost done!")
     const continueButton = page.locator('button:has-text("Continue")');
     if (await continueButton.isVisible({ timeout: 2000 }).catch(() => false)) {
+      console.log('PRF retry dialog detected, clicking Continue...');
       await continueButton.click();
     }
     
-    await responsePromise;
+    // Wait for the finish response with explicit timeout handling
+    await Promise.race([
+      responsePromise,
+      page.waitForTimeout(WEBAUTHN_TIMEOUT).then(() => {
+        throw new Error('WebAuthn operation timed out - credential picker may be waiting');
+      }),
+    ]);
   } catch (error) {
+    const errorMsg = String(error);
+    
+    // Check for UI error message
+    const errorEl = page.locator('text=Failed to initiate, text=error, text=Error').first();
+    const uiError = await errorEl.textContent({ timeout: 1000 }).catch(() => null);
+    
     if (apiError) {
       return { success: false, error: apiError };
     }
-    return { success: false, error: String(error) };
+    if (uiError) {
+      return { success: false, error: uiError };
+    }
+    if (pageErrors.length > 0) {
+      return { success: false, error: pageErrors.join('; ') };
+    }
+    return { success: false, error: errorMsg };
   }
 
+  // Wait a bit for the response to be captured
   await page.waitForTimeout(500);
 
   if (finishResponse) {
     return { success: true, userId: finishResponse.uuid };
   }
 
-  return { success: false, error: apiError || 'No finish response captured' };
+  if (apiError) {
+    return { success: false, error: apiError };
+  }
+
+  return { success: false, error: 'No finish response captured' };
 }
 
 /**
@@ -119,7 +171,7 @@ async function registerUserViaUI(
  */
 async function loginUserViaUI(
   page: Page,
-  options: { tenantId?: string; expectCachedUser?: boolean } = {}
+  options: { tenantId?: string; expectCachedUser?: boolean; cachedUserIndex?: number } = {}
 ): Promise<{ success: boolean; userId?: string; error?: string }> {
   const loginUrl = options.tenantId
     ? `${FRONTEND_URL}/id/${options.tenantId}/login`
@@ -129,35 +181,64 @@ async function loginUserViaUI(
   await page.waitForLoadState('networkidle');
   await page.waitForTimeout(1000);
 
+  // Track API responses and errors
   let finishResponse: any = null;
+  let finishStatus: number | undefined;
   let apiError: string | undefined;
+  const pageErrors: string[] = [];
+
+  // Capture page errors
+  page.on('pageerror', (error) => {
+    pageErrors.push(error.message);
+    console.log(`[PAGE ERROR] ${error.message}`);
+  });
+
+  // Capture console errors
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') {
+      console.log(`[CONSOLE ERROR] ${msg.text()}`);
+    }
+  });
 
   page.on('response', async (response) => {
     const url = response.url();
     if (url.includes('login-webauthn-finish')) {
+      finishStatus = response.status();
       try {
-        if (response.status() === 200) {
-          finishResponse = await response.json();
-        }
-      } catch {}
+        finishResponse = await response.json();
+      } catch {
+        // Ignore JSON parse errors
+      }
+    } else if (url.includes('login-webauthn-begin') && !response.ok()) {
+      try {
+        const data = await response.json();
+        apiError = data.error || `Begin failed: HTTP ${response.status()}`;
+      } catch {
+        apiError = `Begin failed: HTTP ${response.status()}`;
+      }
     }
   });
 
-  // Find login button
+  // Determine which button to click
   let loginButton;
   if (options.expectCachedUser !== false) {
-    const cachedUserButton = page.locator('#login-cached-user-0-loginsignup');
+    // Try to find cached user button first
+    const cachedIndex = options.cachedUserIndex ?? 0;
+    const cachedUserButton = page.locator(`#login-cached-user-${cachedIndex}-loginsignup`);
     if (await cachedUserButton.isVisible({ timeout: 3000 }).catch(() => false)) {
       loginButton = cachedUserButton;
     }
   }
 
   if (!loginButton) {
+    // Fall back to security-key (USB/roaming) passkey login button
+    // soft-fido2 presents as a USB HID authenticator, not a platform authenticator
     loginButton = page.locator('#loginPasskey-security-key-submit-loginsignup');
   }
 
   await expect(loginButton).toBeVisible({ timeout: 15000 });
 
+  // Click and wait for login to complete with timeout
   const WEBAUTHN_TIMEOUT = 15000;
   
   try {
@@ -167,18 +248,39 @@ async function loginUserViaUI(
     );
     
     await loginButton.click();
-    await responsePromise;
+    
+    // Race between response and timeout
+    await Promise.race([
+      responsePromise,
+      page.waitForTimeout(WEBAUTHN_TIMEOUT).then(() => {
+        throw new Error('WebAuthn operation timed out - credential picker may be waiting');
+      }),
+    ]);
   } catch (error) {
+    // Check for UI error message
+    const errorEl = page.locator('text=Failed to initiate').first();
+    const uiError = await errorEl.textContent({ timeout: 1000 }).catch(() => null);
+    
     if (apiError) {
       return { success: false, error: apiError };
+    }
+    if (uiError) {
+      return { success: false, error: uiError };
+    }
+    if (pageErrors.length > 0) {
+      return { success: false, error: pageErrors.join('; ') };
     }
     return { success: false, error: String(error) };
   }
 
   await page.waitForTimeout(500);
 
-  if (finishResponse) {
+  if (finishResponse && finishStatus === 200) {
     return { success: true, userId: finishResponse.uuid };
+  }
+
+  if (apiError) {
+    return { success: false, error: apiError };
   }
 
   return { success: false, error: 'No finish response captured' };

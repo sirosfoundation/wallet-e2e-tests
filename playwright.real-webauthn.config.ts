@@ -37,9 +37,10 @@ export default defineConfig({
   retries: process.env.CI ? 2 : 0,
   
   // Reporter configuration
+  // Set open: 'never' to prevent HTML reporter from opening browser and hanging
   reporter: process.env.CI
-    ? [['github'], ['html', { outputFolder: 'playwright-report-real-webauthn' }]]
-    : [['list'], ['html', { outputFolder: 'playwright-report-real-webauthn' }]],
+    ? [['github'], ['html', { outputFolder: 'playwright-report-real-webauthn', open: 'never' }]]
+    : [['list'], ['html', { outputFolder: 'playwright-report-real-webauthn', open: 'never' }]],
   
   // Global timeout - real WebAuthn may need more time for UI interactions
   timeout: 60000,
