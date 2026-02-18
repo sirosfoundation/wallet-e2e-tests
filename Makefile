@@ -14,7 +14,7 @@
 #   make up SOFT_FIDO2_PATH=/custom/path FRONTEND_PATH=/custom/frontend
 
 .PHONY: help install test test-headed test-debug test-ui \
-        test-trust test-verifier test-multi-tenancy test-real-webauthn \
+        test-trust test-verifier test-registry test-multi-tenancy test-real-webauthn \
         up down logs run ci-docker status register-mocks \
         clean clean-all check-servers \
         start-soft-fido2 stop-soft-fido2
@@ -26,6 +26,7 @@ ADMIN_URL ?= http://localhost:8081
 MOCK_ISSUER_URL ?= http://localhost:9000
 MOCK_VERIFIER_URL ?= http://localhost:9001
 MOCK_PDP_URL ?= http://localhost:9091
+VCTM_REGISTRY_URL ?= http://localhost:8097
 TEST_COMPOSE_FILE := docker-compose.test.yml
 ADMIN_TOKEN ?= e2e-test-admin-token-for-testing-purposes-only
 
@@ -58,9 +59,10 @@ help: ## Show this help
 	@echo "  BACKEND_PATH    = $(BACKEND_PATH)"
 	@echo ""
 	@echo "Service URLs:"
-	@echo "  FRONTEND_URL    = $(FRONTEND_URL)"
-	@echo "  BACKEND_URL     = $(BACKEND_URL)"
-	@echo "  ADMIN_URL       = $(ADMIN_URL)"
+	@echo "  FRONTEND_URL     = $(FRONTEND_URL)"
+	@echo "  BACKEND_URL      = $(BACKEND_URL)"
+	@echo "  ADMIN_URL        = $(ADMIN_URL)"
+	@echo "  VCTM_REGISTRY_URL= $(VCTM_REGISTRY_URL)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | \
 		awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-18s$(NC) %s\n", $$1, $$2}'
@@ -112,7 +114,8 @@ up: start-soft-fido2 ## Start fresh test environment (rebuilds all Docker images
 		   curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
 		   curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
 		   curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null 2>&1 && \
-		   curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1; then \
+		   curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(VCTM_REGISTRY_URL)/status >/dev/null 2>&1; then \
 			echo "$(GREEN)All services are healthy!$(NC)"; break; \
 		fi; \
 		echo "  Waiting... ($$i/120)"; sleep 2; \
@@ -122,6 +125,7 @@ up: start-soft-fido2 ## Start fresh test environment (rebuilds all Docker images
 	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null || (echo "$(RED)Mock issuer not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null || (echo "$(RED)Mock verifier not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null || (echo "$(RED)Mock PDP not ready$(NC)"; exit 1)
+	@curl -sf $(VCTM_REGISTRY_URL)/status >/dev/null || (echo "$(RED)VCTM Registry not ready$(NC)"; exit 1)
 	@# Register mock issuer and verifier with the wallet backend via admin API
 	@echo "$(GREEN)Registering mock issuer and verifier...$(NC)"
 	@$(MAKE) register-mocks
@@ -178,6 +182,9 @@ status: ## Check status of test services
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1 && \
 		echo "  $(GREEN)✓$(NC) Mock PDP: $(MOCK_PDP_URL)" || \
 		echo "  $(RED)✗$(NC) Mock PDP: $(MOCK_PDP_URL)"
+	@curl -sf $(VCTM_REGISTRY_URL)/status >/dev/null 2>&1 && \
+		echo "  $(GREEN)✓$(NC) VCTM Registry: $(VCTM_REGISTRY_URL)" || \
+		echo "  $(RED)✗$(NC) VCTM Registry: $(VCTM_REGISTRY_URL)"
 	@if [ -f "$(SOFT_FIDO2_PID)" ] && kill -0 $$(cat "$(SOFT_FIDO2_PID)") 2>/dev/null; then \
 		echo "  $(GREEN)✓$(NC) soft-fido2: running (PID: $$(cat $(SOFT_FIDO2_PID)))"; \
 	else \
@@ -242,6 +249,13 @@ test-verifier: ## Run verifier trust tests only
 		MOCK_ISSUER_URL=$(MOCK_ISSUER_URL) MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
 		TRUST_PDP_URL=$(MOCK_PDP_URL) MOCK_PDP_URL=$(MOCK_PDP_URL) \
 		npx playwright test specs/api/verifier-trust.spec.ts
+
+test-registry: ## Run VCTM registry API tests
+	@echo "$(GREEN)Running VCTM registry tests...$(NC)"
+	@curl -sf $(VCTM_REGISTRY_URL)/status >/dev/null || \
+		(echo "$(RED)Registry not running. Run 'make up' first.$(NC)"; exit 1)
+	VCTM_REGISTRY_URL=$(VCTM_REGISTRY_URL) \
+		npx playwright test specs/api/registry.spec.ts
 
 test-multi-tenancy: ## Run multi-tenancy tests (requires Admin API)
 	FRONTEND_URL=$(FRONTEND_URL) BACKEND_URL=$(BACKEND_URL) ADMIN_TOKEN=$(ADMIN_TOKEN) \

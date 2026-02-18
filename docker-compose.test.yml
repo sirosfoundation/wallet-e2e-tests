@@ -34,6 +34,7 @@ services:
         - VITE_OPENID4VCI_REDIRECT_URI=http://localhost:3000/
         - VITE_STATIC_PUBLIC_URL=http://localhost:3000
         - VITE_STATIC_NAME=E2E Test Wallet
+        - VITE_VCT_REGISTRY_URL=http://localhost:8097/type-metadata
     image: wallet-frontend-e2e-test:local
     container_name: wallet-frontend-e2e-test
     ports:
@@ -143,6 +144,37 @@ services:
     networks:
       - e2e-test-network
 
+  # VCTM Registry Server - serves credential type metadata
+  # Uses network_mode: host so it can fetch VCTMs from localhost mock services
+  vctm-registry:
+    build:
+      context: ${BACKEND_PATH:-../go-wallet-backend}
+      dockerfile: Dockerfile.registry
+    image: vctm-registry-e2e-test:local
+    container_name: vctm-registry-e2e-test
+    network_mode: host
+    environment:
+      # Use environment variables to override config
+      - REGISTRY_SERVER_HOST=0.0.0.0
+      - REGISTRY_SERVER_PORT=8097
+      - REGISTRY_SOURCE_URL=https://registry.siros.org/.well-known/vctm-registry.json
+      - REGISTRY_SOURCE_POLL_INTERVAL=5m
+      - REGISTRY_CACHE_PATH=/app/data/vctm-cache.json
+      # Enable dynamic fetching for E2E tests - VCTMs can be fetched from URLs
+      - REGISTRY_DYNAMIC_CACHE_ENABLED=true
+      - REGISTRY_DYNAMIC_CACHE_DEFAULT_TTL=1h
+      - REGISTRY_DYNAMIC_CACHE_MAX_TTL=24h
+      - REGISTRY_DYNAMIC_CACHE_MIN_TTL=1m
+      # Disable auth requirement for tests
+      - REGISTRY_JWT_REQUIRE_AUTH=false
+      - REGISTRY_LOGGING_LEVEL=debug
+    volumes:
+      - registry-data:/app/data
+    # Note: distroless image has no shell/wget, healthcheck done by make up
+
 networks:
   e2e-test-network:
     driver: bridge
+
+volumes:
+  registry-data:
