@@ -167,6 +167,9 @@ services:
       - REGISTRY_DYNAMIC_CACHE_MIN_TTL=1m
       # Disable auth requirement for tests
       - REGISTRY_JWT_REQUIRE_AUTH=false
+      # Increase rate limit for tests (default burst is only 5)
+      - REGISTRY_RATE_LIMIT_UNAUTHENTICATED_RPM=1000
+      - REGISTRY_RATE_LIMIT_BURST_MULTIPLIER=10
       - REGISTRY_LOGGING_LEVEL=debug
     volumes:
       - registry-data:/app/data
