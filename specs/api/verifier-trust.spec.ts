@@ -58,7 +58,7 @@ test.describe('Verifier Trust - Mock Verifier Availability @api @trust @verifier
 
     const metadata = await response.json();
     expect(metadata.client_id).toBeTruthy();
-    expect(metadata.client_name).toBe('Test Verifier');
+    expect(metadata.client_name).toBe('E2E Test Verifier');
     expect(metadata.vp_formats).toBeDefined();
   });
 
@@ -70,14 +70,8 @@ test.describe('Verifier Trust - Mock Verifier Availability @api @trust @verifier
     expect(metadata.issuer).toBe(MOCK_VERIFIER_URL);
   });
 
-  test('mock verifier returns presentation types', async () => {
-    const response = await request.get(`${MOCK_VERIFIER_URL}/presentation_types`);
-    expect(response.ok()).toBe(true);
-
-    const types = await response.json();
-    expect(types['eu.europa.ec.eudi.pid.1']).toBeDefined();
-    expect(types['org.iso.18013.5.1.mDL']).toBeDefined();
-  });
+  // Note: /presentation_types endpoint is not standard OpenID4VP - removed
+  // Mock verifier uses /.well-known/openid4vp-verifier for supported formats
 });
 
 test.describe('Verifier Trust - Discovery and Trust Evaluation @api @trust @verifier', () => {

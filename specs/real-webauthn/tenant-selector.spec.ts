@@ -446,7 +446,7 @@ test.describe('TenantSelector - Unauthenticated Mode (Login Page)', () => {
     await page.waitForTimeout(500);
 
     // TenantSelector should not be visible when there are no cached users
-    const tenantSelector = page.locator('#tenant-selector-trigger');
+    const tenantSelector = page.locator('#tenant-selector');
     await expect(tenantSelector).not.toBeVisible({ timeout: 3000 });
   });
 
@@ -502,7 +502,7 @@ test.describe('TenantSelector - Unauthenticated Mode (Login Page)', () => {
     expect(btnCount).toBeGreaterThan(0);
 
     // TenantSelector should not be visible when only one tenant
-    const tenantSelector = page.locator('#tenant-selector-trigger');
+    const tenantSelector = page.locator('#tenant-selector');
     await expect(tenantSelector).not.toBeVisible({ timeout: 3000 });
   });
 
@@ -555,11 +555,11 @@ test.describe('TenantSelector - Unauthenticated Mode (Login Page)', () => {
     expect(btnCount).toBeGreaterThan(0);
 
     // TenantSelector should be visible
-    const tenantSelector = page.locator('#tenant-selector-trigger');
+    const tenantSelector = page.locator('#tenant-selector');
     await expect(tenantSelector).toBeVisible({ timeout: 10000 });
   });
 
-  test('TenantSelector dropdown shows available tenants and redirects', async ({ page }) => {
+  test('TenantSelector shows available tenants and redirects', async ({ page }) => {
     const userA = `user-a-${generateTestId()}`;
     const userB = `user-b-${generateTestId()}`;
 
@@ -582,32 +582,22 @@ test.describe('TenantSelector - Unauthenticated Mode (Login Page)', () => {
     await page.waitForLoadState('networkidle');
     await page.waitForTimeout(1000);
 
-    // Open the dropdown
-    const tenantSelector = page.locator('#tenant-selector-trigger');
+    // Verify select is visible (native <select> element)
+    const tenantSelector = page.locator('#tenant-selector');
     await expect(tenantSelector).toBeVisible({ timeout: 5000 });
-    await tenantSelector.click();
-    await page.waitForTimeout(300);
 
-    // Verify dropdown is open with listbox role
-    const dropdown = page.locator('[role="listbox"]');
-    await expect(dropdown).toBeVisible();
+    // Verify both options are available in the select
+    const options = await tenantSelector.locator('option').all();
+    expect(options.length).toBeGreaterThanOrEqual(2);
 
-    // Should show both tenant options
-    const optionA = page.locator(`#tenant-option-${tenantA}`);
-    const optionB = page.locator(`#tenant-option-${tenantB}`);
-    await expect(optionA).toBeVisible();
-    await expect(optionB).toBeVisible();
+    // Get option text content
+    const optionTexts = await Promise.all(options.map(o => o.textContent()));
+    console.log('Available options:', optionTexts);
+    expect(optionTexts.some(t => t?.includes('Alpha'))).toBe(true);
+    expect(optionTexts.some(t => t?.includes('Beta'))).toBe(true);
 
-    // Current tenant should have aria-selected="true"
-    await expect(optionA).toHaveAttribute('aria-selected', 'true');
-
-    // Should show display names
-    const dropdownContent = await dropdown.textContent();
-    expect(dropdownContent).toContain('Tenant Alpha');
-    expect(dropdownContent).toContain('Tenant Beta');
-
-    // Click Tenant B - should redirect
-    await optionB.click();
+    // Select Tenant B by value - should trigger redirect
+    await tenantSelector.selectOption(tenantB);
     await page.waitForURL(`**/id/${tenantB}/login**`, { timeout: 5000 });
     expect(page.url()).toContain(`/id/${tenantB}/login`);
   });
@@ -667,16 +657,12 @@ test.describe('TenantSelector - Authenticated Mode (Sidebar)', () => {
     await page.waitForTimeout(1000);
 
     // TenantSelector should be visible in sidebar
-    const tenantSelector = page.locator('#tenant-selector-trigger');
+    const tenantSelector = page.locator('#tenant-selector');
     await expect(tenantSelector).toBeVisible({ timeout: 5000 });
 
-    // Open dropdown
-    await tenantSelector.click();
-    await page.waitForTimeout(300);
-
-    // Should show "logout required" message for authenticated mode
-    const dropdownContent = await page.locator('[role="listbox"]').textContent();
-    expect(dropdownContent).toMatch(/switch.*logout|logout.*required/i);
+    // Verify select has options (native select doesn't need click to check)
+    const options = await tenantSelector.locator('option').all();
+    expect(options.length).toBeGreaterThanOrEqual(2);
   });
 
   test('Switching tenant from sidebar logs out and redirects', async ({ page }) => {
@@ -712,13 +698,9 @@ test.describe('TenantSelector - Authenticated Mode (Sidebar)', () => {
     expect(page.url()).toContain(`/id/${tenantC}`);
     expect(page.url()).not.toContain('/login');
 
-    // Open dropdown and click on Tenant D
-    const tenantSelector = page.locator('#tenant-selector-trigger');
-    await tenantSelector.click();
-    await page.waitForTimeout(300);
-
-    const optionD = page.locator(`#tenant-option-${tenantD}`);
-    await optionD.click();
+    // Select Tenant D (native select triggers redirect)
+    const tenantSelector = page.locator('#tenant-selector');
+    await tenantSelector.selectOption({ value: tenantD });
 
     // Should redirect to tenant D's login page (after logout)
     await page.waitForURL(`**/id/${tenantD}/login**`, { timeout: 10000 });
@@ -763,7 +745,7 @@ test.describe('TenantSelector - Edge Cases', () => {
     await page.waitForTimeout(500);
 
     // TenantSelector should NOT be visible with only one tenant
-    const tenantSelector = page.locator('#tenant-selector-trigger');
+    const tenantSelector = page.locator('#tenant-selector');
     await expect(tenantSelector).not.toBeVisible({ timeout: 3000 });
   });
 
@@ -793,57 +775,16 @@ test.describe('TenantSelector - Edge Cases', () => {
     await page.waitForTimeout(1000);
 
     // TenantSelector should be visible with two tenants
-    const tenantSelector = page.locator('#tenant-selector-trigger');
+    const tenantSelector = page.locator('#tenant-selector');
     await expect(tenantSelector).toBeVisible({ timeout: 5000 });
 
-    // Open dropdown - should see default tenant option
-    await tenantSelector.click();
-    await page.waitForTimeout(300);
-
-    // Look for "Default" option (empty string tenant ID shows as "Default")
-    const dropdown = page.locator('[role="listbox"]');
-    const dropdownContent = await dropdown.textContent();
-    expect(dropdownContent).toMatch(/default/i);
+    // Verify options include default tenant (shown as "Default" for empty tenant ID)
+    const options = await tenantSelector.locator('option').all();
+    const optionTexts = await Promise.all(options.map(o => o.textContent()));
+    console.log('Available options:', optionTexts);
+    expect(optionTexts.some(t => t?.toLowerCase().includes('default'))).toBe(true);
   });
 
-  test('TenantSelector dropdown closes when clicking outside', async ({ page }) => {
-    const userE = `user-e-${generateTestId()}`;
-    const defaultUser = `user-default-${generateTestId()}`;
-
-    // Setup: need multiple tenants cached
-    await page.goto(`${FRONTEND_URL}/login`);
-    await clearBrowserStorage(page);
-
-    const resultE = await registerUserViaUI(page, { username: userE, tenantId: tenantE });
-    expect(resultE.success).toBe(true);
-    await waitForWalletReady(page);
-    await logoutViaSidebar(page);
-
-    const result = await registerUserViaUI(page, { username: defaultUser });
-    expect(result.success).toBe(true);
-    await waitForWalletReady(page);
-    await logoutViaSidebar(page);
-
-    // Navigate to login page
-    await page.goto(`${FRONTEND_URL}/id/${tenantE}/login`);
-    await page.waitForLoadState('networkidle');
-    await page.waitForTimeout(1000);
-
-    // Open dropdown
-    const tenantSelector = page.locator('#tenant-selector-trigger');
-    await expect(tenantSelector).toBeVisible({ timeout: 5000 });
-    await tenantSelector.click();
-    await page.waitForTimeout(300);
-
-    // Dropdown should be open
-    const dropdown = page.locator('[role="listbox"]');
-    await expect(dropdown).toBeVisible();
-
-    // Click outside (on the page body)
-    await page.click('body', { position: { x: 10, y: 10 } });
-    await page.waitForTimeout(300);
-
-    // Dropdown should be closed
-    await expect(dropdown).not.toBeVisible();
-  });
+  // Note: "dropdown closes when clicking outside" test removed - 
+  // Native <select> elements handle this behavior automatically via browser/OS
 });
