@@ -1,4 +1,14 @@
 /**
+ * @deprecated This CDP-based virtual authenticator is deprecated.
+ * Use real WebAuthn with soft-fido2 instead. See helpers/ui-actions.ts
+ * and the real-webauthn tests in specs/real-webauthn/.
+ *
+ * The CDP approach was deprecated because Chrome's virtual authenticator
+ * reports hasPrf=true but returns empty PRF results, requiring extensive
+ * mocking that doesn't match real browser behavior.
+ */
+
+/**
  * WebAuthn Virtual Authenticator Helper for E2E Tests
  *
  * Uses Chrome DevTools Protocol (CDP) to create and manage virtual
