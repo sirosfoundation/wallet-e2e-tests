@@ -6,10 +6,34 @@
  *
  * This is used by E2E tests to dynamically adjust behavior based
  * on what the backend under test supports.
+ *
+ * Transport Modes:
+ *   TRANSPORT_MODE env var controls which transport to test:
+ *   - 'auto': Use best available (WebSocket if supported, else HTTP)
+ *   - 'websocket': Force WebSocket only (skip if unavailable)
+ *   - 'http': Force HTTP only (even if WebSocket is available)
  */
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 const ENGINE_URL = process.env.ENGINE_URL || BACKEND_URL;
+const TRANSPORT_MODE = process.env.TRANSPORT_MODE || 'auto';
+
+/**
+ * Valid transport modes
+ */
+export type TransportMode = 'auto' | 'websocket' | 'http';
+
+/**
+ * Get configured transport mode
+ */
+export function getTransportMode(): TransportMode {
+  const mode = TRANSPORT_MODE.toLowerCase();
+  if (mode === 'websocket' || mode === 'http' || mode === 'auto') {
+    return mode;
+  }
+  console.warn(`Invalid TRANSPORT_MODE '${TRANSPORT_MODE}', using 'auto'`);
+  return 'auto';
+}
 
 /**
  * Backend status response from /status endpoint
@@ -131,16 +155,103 @@ export function clearStatusCache(): void {
 /**
  * Get transport mode description for logging
  *
- * Returns a human-readable description of what transport(s) are available.
+ * Returns a human-readable description of what transport(s) are available
+ * and what mode is configured.
  */
 export async function getTransportDescription(): Promise<string> {
   const wsAvailable = await isWebSocketAvailable();
   const apiVersion = await getApiVersion();
+  const mode = getTransportMode();
 
-  const transports: string[] = ['http'];
+  const available: string[] = ['http'];
   if (wsAvailable) {
-    transports.unshift('websocket');
+    available.unshift('websocket');
   }
 
-  return `API v${apiVersion}, transports: ${transports.join(', ')}`;
+  return `API v${apiVersion}, available: [${available.join(', ')}], mode: ${mode}`;
+}
+
+/**
+ * Get the VITE_TRANSPORT_PREFERENCE value for the current transport mode
+ *
+ * Maps TRANSPORT_MODE to the frontend configuration value.
+ */
+export function getViteTransportPreference(): string {
+  const mode = getTransportMode();
+  switch (mode) {
+    case 'websocket':
+      return 'websocket';
+    case 'http':
+      return 'http';
+    case 'auto':
+    default:
+      return 'websocket,http';
+  }
+}
+
+/**
+ * Check if the configured transport mode can run with current backend
+ *
+ * Returns an object with:
+ * - canRun: boolean - whether tests can proceed
+ * - reason: string - explanation for logging/skip message
+ * - effectiveTransport: string - what transport will actually be used
+ */
+export async function validateTransportMode(): Promise<{
+  canRun: boolean;
+  reason: string;
+  effectiveTransport: string;
+}> {
+  const mode = getTransportMode();
+  const wsAvailable = await isWebSocketAvailable();
+
+  switch (mode) {
+    case 'websocket':
+      if (!wsAvailable) {
+        return {
+          canRun: false,
+          reason: 'WebSocket mode requested but backend does not support WebSocket',
+          effectiveTransport: 'none',
+        };
+      }
+      return {
+        canRun: true,
+        reason: 'Using WebSocket transport (forced)',
+        effectiveTransport: 'websocket',
+      };
+
+    case 'http':
+      return {
+        canRun: true,
+        reason: wsAvailable
+          ? 'Using HTTP transport (forced, WebSocket available but not used)'
+          : 'Using HTTP transport',
+        effectiveTransport: 'http',
+      };
+
+    case 'auto':
+    default:
+      return {
+        canRun: true,
+        reason: wsAvailable
+          ? 'Using WebSocket transport (auto-detected)'
+          : 'Using HTTP transport (WebSocket not available)',
+        effectiveTransport: wsAvailable ? 'websocket' : 'http',
+      };
+  }
+}
+
+/**
+ * Get list of available transport modes based on backend capabilities
+ *
+ * Returns transport modes that can actually run against the current backend.
+ */
+export async function getAvailableTransportModes(): Promise<TransportMode[]> {
+  const wsAvailable = await isWebSocketAvailable();
+  const modes: TransportMode[] = ['http'];
+  if (wsAvailable) {
+    modes.unshift('websocket');
+    modes.push('auto');
+  }
+  return modes;
 }

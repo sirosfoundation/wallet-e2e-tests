@@ -8,15 +8,24 @@ import { defineConfig, devices } from '@playwright/test';
  * - BACKEND_URL: URL of the go-wallet-backend (default: http://localhost:8080)
  * - ENGINE_URL: URL of the wallet engine for WebSocket (defaults to BACKEND_URL)
  * - ADMIN_URL: URL of the go-wallet-backend admin API (default: http://localhost:8081)
+ * - TRANSPORT_MODE: Transport to test - 'auto' | 'websocket' | 'http' (default: auto)
  * - START_SERVERS: Set to 'true' to auto-start both servers (default: false)
  * - FRONTEND_PATH: Path to wallet-frontend repo (for auto-start)
  * - BACKEND_PATH: Path to go-wallet-backend repo (for auto-start)
  *
  * Transport modes:
- *   The wallet frontend will automatically detect WebSocket capability from
- *   the backend's /status endpoint. When the backend reports 'websocket' in
- *   its capabilities array, the frontend will use WebSocket transport.
- *   Otherwise, it falls back to HTTP proxy transport.
+ *   - auto: Use best available (WebSocket if supported, else HTTP)
+ *   - websocket: Force WebSocket only (tests skip if unavailable)
+ *   - http: Force HTTP only (even if WebSocket is available)
+ *
+ * Running with specific transport:
+ *   TRANSPORT_MODE=http npm test
+ *   TRANSPORT_MODE=websocket npm test
+ *   make test-http
+ *   make test-ws
+ *
+ * Running all transport modes:
+ *   make test-all-transports
  *
  * Example usage:
  *   # Test against already running servers
@@ -30,9 +39,23 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
 const ENGINE_URL = process.env.ENGINE_URL || BACKEND_URL;
 const ADMIN_URL = process.env.ADMIN_URL || 'http://localhost:8081';
+const TRANSPORT_MODE = process.env.TRANSPORT_MODE || 'auto';
 const START_SERVERS = process.env.START_SERVERS === 'true';
 const FRONTEND_PATH = process.env.FRONTEND_PATH || '../wallet-frontend';
 const BACKEND_PATH = process.env.BACKEND_PATH || '../go-wallet-backend';
+
+// Map transport mode to VITE_TRANSPORT_PREFERENCE
+function getViteTransportPreference(mode: string): string {
+  switch (mode.toLowerCase()) {
+    case 'websocket':
+      return 'websocket';
+    case 'http':
+      return 'http';
+    case 'auto':
+    default:
+      return 'websocket,http';
+  }
+}
 
 // Extract hostname from FRONTEND_URL for RPID
 const frontendHostname = new URL(FRONTEND_URL).hostname;
@@ -109,17 +132,18 @@ export default defineConfig({
           VITE_WALLET_ENGINE_URL: ENGINE_URL,
           VITE_WEBAUTHN_RPID: frontendHostname,
           VITE_LOGIN_WITH_PASSWORD: 'false',
-          // Prefer WebSocket when available, with HTTP fallback
-          VITE_TRANSPORT_PREFERENCE: 'websocket,http',
+          // Transport preference based on TRANSPORT_MODE
+          VITE_TRANSPORT_PREFERENCE: getViteTransportPreference(TRANSPORT_MODE),
         },
       },
     ],
   }),
 });
 
-// Export URLs for use in test files
+// Export URLs and config for use in test files
 export const config = {
   frontendUrl: FRONTEND_URL,
   backendUrl: BACKEND_URL,
   engineUrl: ENGINE_URL,
+  transportMode: TRANSPORT_MODE,
 };

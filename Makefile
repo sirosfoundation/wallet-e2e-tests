@@ -5,6 +5,11 @@
 #   make tests   # Run all tests (API + WebAuthn)
 #   make down    # Stop everything
 #
+# Transport Modes:
+#   make test-http          # Run tests forcing HTTP transport
+#   make test-ws            # Run tests forcing WebSocket transport
+#   make test-all-transports # Run test suite for each transport
+#
 # The Makefile assumes the following workspace layout:
 #   ../soft-fido2        - Virtual FIDO2 authenticator
 #   ../wallet-frontend   - React frontend
@@ -16,6 +21,7 @@
 .PHONY: help install \
         up down logs status \
         tests test-api test-webauthn test-credential test-tenant test-registry \
+        test-http test-ws test-all-transports check-ws-available \
         tests-ci test-api-ci test-webauthn-ci \
         start-soft-fido2 stop-soft-fido2 \
         clean clean-all
@@ -33,6 +39,9 @@ MOCK_VERIFIER_URL ?= http://localhost:9001
 MOCK_PDP_URL ?= http://localhost:9091
 VCTM_REGISTRY_URL ?= http://localhost:8097
 ADMIN_TOKEN ?= e2e-test-admin-token-for-testing-purposes-only
+
+# Transport mode: auto | http | websocket
+TRANSPORT_MODE ?= auto
 
 # Workspace paths - defaults assume sibling directories
 SOFT_FIDO2_PATH ?= ../soft-fido2
@@ -57,7 +66,8 @@ TEST_ENV := FRONTEND_URL=$(FRONTEND_URL) \
             MOCK_VERIFIER_URL=$(MOCK_VERIFIER_URL) \
             TRUST_PDP_URL=$(MOCK_PDP_URL) \
             MOCK_PDP_URL=$(MOCK_PDP_URL) \
-            VCTM_REGISTRY_URL=$(VCTM_REGISTRY_URL)
+            VCTM_REGISTRY_URL=$(VCTM_REGISTRY_URL) \
+            TRANSPORT_MODE=$(TRANSPORT_MODE)
 
 # Colors for output
 GREEN := \033[0;32m
@@ -77,6 +87,11 @@ help: ## Show this help
 	@echo "  make tests    # Run all tests (API + WebAuthn)"
 	@echo "  make down     # Stop everything"
 	@echo ""
+	@echo "$(GREEN)Transport Mode Testing:$(NC)"
+	@echo "  make test-http           # Force HTTP transport"
+	@echo "  make test-ws             # Force WebSocket transport"
+	@echo "  make test-all-transports # Run tests for each available transport"
+	@echo ""
 	@echo "$(GREEN)Focused Test Targets:$(NC)"
 	@echo "  make test-api       # API tests only (headless)"
 	@echo "  make test-webauthn  # WebAuthn UI tests (headed)"
@@ -87,7 +102,8 @@ help: ## Show this help
 	@echo "$(GREEN)CI Targets (with Xvfb):$(NC)"
 	@echo "  make tests-ci       # All tests with virtual display"
 	@echo ""
-	@echo "$(GREEN)Workspace Paths:$(NC)"
+	@echo "$(GREEN)Configuration:$(NC)"
+	@echo "  TRANSPORT_MODE  = $(TRANSPORT_MODE) (auto|http|websocket)"
 	@echo "  SOFT_FIDO2_PATH = $(SOFT_FIDO2_PATH)"
 	@echo "  FRONTEND_PATH   = $(FRONTEND_PATH)"
 	@echo "  BACKEND_PATH    = $(BACKEND_PATH)"
@@ -256,6 +272,79 @@ test-registry: ## Run VCTM registry tests
 	@curl -sf $(VCTM_REGISTRY_URL)/status >/dev/null || \
 		(echo "$(RED)Registry not running. Run 'make up' first.$(NC)"; exit 1)
 	$(TEST_ENV) npx playwright test specs/api/registry.spec.ts --reporter=list
+
+# =============================================================================
+# Transport Mode Testing
+# =============================================================================
+
+# Check if WebSocket is available from backend
+check-ws-available: ## Check if backend supports WebSocket
+	@echo "$(GREEN)Checking backend capabilities...$(NC)"
+	@STATUS=$$(curl -sf $(BACKEND_URL)/status 2>/dev/null); \
+	if [ -z "$$STATUS" ]; then \
+		echo "$(RED)Backend not reachable$(NC)"; exit 1; \
+	fi; \
+	if echo "$$STATUS" | grep -q '"websocket"'; then \
+		echo "$(GREEN)✓ WebSocket supported$(NC)"; \
+	else \
+		echo "$(YELLOW)✗ WebSocket not available$(NC)"; exit 1; \
+	fi
+
+# Run tests with HTTP transport only
+test-http: ## Run tests with HTTP transport (forced)
+	@echo "$(GREEN)Running tests with HTTP transport...$(NC)"
+	$(TEST_ENV) TRANSPORT_MODE=http npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
+
+# Run tests with WebSocket transport only
+test-ws: check-ws-available ## Run tests with WebSocket transport (forced)
+	@echo "$(GREEN)Running tests with WebSocket transport...$(NC)"
+	$(TEST_ENV) TRANSPORT_MODE=websocket npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
+
+# Run tests for all available transports
+test-all-transports: ## Run test suite for each available transport
+	@echo "$(GREEN)╔════════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(GREEN)║           Running tests for all transports                      ║$(NC)"
+	@echo "$(GREEN)╚════════════════════════════════════════════════════════════════╝$(NC)"
+	@echo ""
+	@# Check backend
+	@curl -sf $(BACKEND_URL)/status >/dev/null || \
+		(echo "$(RED)Backend not running. Run 'make up' first.$(NC)"; exit 1)
+	@# Determine available transports
+	@WS_AVAILABLE=$$(curl -sf $(BACKEND_URL)/status 2>/dev/null | grep -q '"websocket"' && echo yes || echo no); \
+	RESULTS_DIR="test-results/transports-$$(date +%Y%m%d-%H%M%S)"; \
+	mkdir -p "$$RESULTS_DIR"; \
+	PASSED=0; FAILED=0; \
+	echo ""; \
+	echo "$(GREEN)━━━ HTTP Transport ━━━$(NC)"; \
+	if $(TEST_ENV) TRANSPORT_MODE=http npx playwright test --config=playwright.real-webauthn.config.ts \
+		--reporter=html --output="$$RESULTS_DIR/http" 2>&1; then \
+		echo "$(GREEN)✓ HTTP tests passed$(NC)"; PASSED=$$((PASSED + 1)); \
+	else \
+		echo "$(RED)✗ HTTP tests failed$(NC)"; FAILED=$$((FAILED + 1)); \
+	fi; \
+	cp -r playwright-report "$$RESULTS_DIR/http-report" 2>/dev/null || true; \
+	echo ""; \
+	if [ "$$WS_AVAILABLE" = "yes" ]; then \
+		echo "$(GREEN)━━━ WebSocket Transport ━━━$(NC)"; \
+		if $(TEST_ENV) TRANSPORT_MODE=websocket npx playwright test --config=playwright.real-webauthn.config.ts \
+			--reporter=html --output="$$RESULTS_DIR/websocket" 2>&1; then \
+			echo "$(GREEN)✓ WebSocket tests passed$(NC)"; PASSED=$$((PASSED + 1)); \
+		else \
+			echo "$(RED)✗ WebSocket tests failed$(NC)"; FAILED=$$((FAILED + 1)); \
+		fi; \
+		cp -r playwright-report "$$RESULTS_DIR/websocket-report" 2>/dev/null || true; \
+	else \
+		echo "$(YELLOW)⏭ Skipping WebSocket (not supported by backend)$(NC)"; \
+	fi; \
+	echo ""; \
+	echo "$(GREEN)╔════════════════════════════════════════════════════════════════╗$(NC)"; \
+	echo "$(GREEN)║                       Summary                                   ║$(NC)"; \
+	echo "$(GREEN)╚════════════════════════════════════════════════════════════════╝$(NC)"; \
+	echo ""; \
+	echo "Results: $$RESULTS_DIR"; \
+	echo "  Passed: $$PASSED"; \
+	echo "  Failed: $$FAILED"; \
+	if [ $$FAILED -gt 0 ]; then exit 1; fi
 
 # =============================================================================
 # CI Targets (with Xvfb virtual display)
