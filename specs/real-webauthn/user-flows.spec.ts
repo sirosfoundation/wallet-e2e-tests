@@ -25,6 +25,12 @@
 
 import { test, expect, request } from '@playwright/test';
 import type { Page, APIRequestContext, Route } from '@playwright/test';
+import {
+  fetchBackendStatus,
+  isWebSocketAvailable,
+  getTransportDescription,
+  clearStatusCache,
+} from '../../helpers/backend-capabilities';
 
 // Environment URLs
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -411,6 +417,31 @@ async function captureEndpointPaths(
 // =============================================================================
 // TEST SUITES - ALL USE REAL UI INTERACTIONS
 // =============================================================================
+
+test.describe('Backend Capabilities Check', () => {
+  test('detect available transport modes', async ({ request }) => {
+    clearStatusCache();
+
+    const status = await fetchBackendStatus(true);
+    expect(status).not.toBeNull();
+    expect(status?.status).toBe('ok');
+
+    const wsAvailable = await isWebSocketAvailable();
+    const transportDesc = await getTransportDescription();
+
+    console.log(`\n=== Backend Capabilities ===`);
+    console.log(`Service: ${status?.service || 'unknown'}`);
+    console.log(`Version: ${status?.version || 'unknown'}`);
+    console.log(`API version: ${status?.api_version || 1}`);
+    console.log(`Transport: ${transportDesc}`);
+    console.log(`WebSocket available: ${wsAvailable}`);
+    console.log(`Capabilities: ${(status?.capabilities || []).join(', ') || 'none'}`);
+    console.log(`============================\n`);
+
+    // Test is informational - just ensure backend is healthy
+    expect(status?.status).toBe('ok');
+  });
+});
 
 test.describe('Full User Flow: Default Tenant Register → Login', () => {
   test('should complete full registration and login cycle in default tenant', async ({ page }) => {

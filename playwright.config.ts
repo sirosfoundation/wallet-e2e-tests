@@ -6,10 +6,17 @@ import { defineConfig, devices } from '@playwright/test';
  * Environment Variables:
  * - FRONTEND_URL: URL of the wallet-frontend (default: http://localhost:3000)
  * - BACKEND_URL: URL of the go-wallet-backend (default: http://localhost:8080)
+ * - ENGINE_URL: URL of the wallet engine for WebSocket (defaults to BACKEND_URL)
  * - ADMIN_URL: URL of the go-wallet-backend admin API (default: http://localhost:8081)
  * - START_SERVERS: Set to 'true' to auto-start both servers (default: false)
  * - FRONTEND_PATH: Path to wallet-frontend repo (for auto-start)
  * - BACKEND_PATH: Path to go-wallet-backend repo (for auto-start)
+ *
+ * Transport modes:
+ *   The wallet frontend will automatically detect WebSocket capability from
+ *   the backend's /status endpoint. When the backend reports 'websocket' in
+ *   its capabilities array, the frontend will use WebSocket transport.
+ *   Otherwise, it falls back to HTTP proxy transport.
  *
  * Example usage:
  *   # Test against already running servers
@@ -21,6 +28,7 @@ import { defineConfig, devices } from '@playwright/test';
 
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
+const ENGINE_URL = process.env.ENGINE_URL || BACKEND_URL;
 const ADMIN_URL = process.env.ADMIN_URL || 'http://localhost:8081';
 const START_SERVERS = process.env.START_SERVERS === 'true';
 const FRONTEND_PATH = process.env.FRONTEND_PATH || '../wallet-frontend';
@@ -86,6 +94,8 @@ export default defineConfig({
           WALLET_SERVER_ATTESTATION: 'none',
           WALLET_SERVER_PORT: new URL(BACKEND_URL).port || '8080',
           WALLET_LOG_LEVEL: 'info',
+          // Enable all roles (including engine for WebSocket support)
+          WALLET_ROLES: 'all',
         },
       },
       {
@@ -96,8 +106,11 @@ export default defineConfig({
         timeout: 120000,
         env: {
           VITE_WALLET_BACKEND_URL: BACKEND_URL,
+          VITE_WALLET_ENGINE_URL: ENGINE_URL,
           VITE_WEBAUTHN_RPID: frontendHostname,
           VITE_LOGIN_WITH_PASSWORD: 'false',
+          // Prefer WebSocket when available, with HTTP fallback
+          VITE_TRANSPORT_PREFERENCE: 'websocket,http',
         },
       },
     ],
@@ -108,4 +121,5 @@ export default defineConfig({
 export const config = {
   frontendUrl: FRONTEND_URL,
   backendUrl: BACKEND_URL,
+  engineUrl: ENGINE_URL,
 };

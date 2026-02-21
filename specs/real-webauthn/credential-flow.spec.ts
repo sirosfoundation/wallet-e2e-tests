@@ -17,6 +17,12 @@
 
 import { test, expect, request } from '@playwright/test';
 import type { Page } from '@playwright/test';
+import {
+  fetchBackendStatus,
+  isWebSocketAvailable,
+  getTransportDescription,
+  clearStatusCache,
+} from '../../helpers/backend-capabilities';
 
 // Environment URLs
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -537,9 +543,29 @@ test.describe.configure({ mode: 'serial' });
 test.describe('Full Credential Flow', () => {
   let username: string;
   let userId: string | undefined;
+  let wsAvailable: boolean;
 
   test.beforeAll(async () => {
     username = `flow-user-${generateTestId()}`;
+    clearStatusCache();
+
+    // Log transport capabilities for test visibility
+    const transportDesc = await getTransportDescription();
+    wsAvailable = await isWebSocketAvailable();
+    console.log(`\n=== Backend Capabilities ===`);
+    console.log(`Transport: ${transportDesc}`);
+    console.log(`WebSocket available: ${wsAvailable}`);
+    console.log(`============================\n`);
+  });
+
+  test('backend is healthy and reports capabilities', async ({ request }) => {
+    const status = await fetchBackendStatus(true);
+    expect(status).not.toBeNull();
+    expect(status?.status).toBe('ok');
+
+    console.log(`Backend version: ${status?.version || 'unknown'}`);
+    console.log(`API version: ${status?.api_version || 1}`);
+    console.log(`Capabilities: ${(status?.capabilities || []).join(', ') || 'none'}`);
   });
 
   test('mock issuer is healthy', async ({ request }) => {

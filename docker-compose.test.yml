@@ -29,12 +29,14 @@ services:
       dockerfile: Dockerfile.e2e
       args:
         - VITE_WALLET_BACKEND_URL=http://localhost:8080
-        - VITE_WS_URL=ws://localhost:8080
+        - VITE_WALLET_ENGINE_URL=http://localhost:8080
         - VITE_WEBAUTHN_RPID=localhost
         - VITE_OPENID4VCI_REDIRECT_URI=http://localhost:3000/
         - VITE_STATIC_PUBLIC_URL=http://localhost:3000
         - VITE_STATIC_NAME=E2E Test Wallet
         - VITE_VCT_REGISTRY_URL=http://localhost:8097/type-metadata
+        # Transport preference: try WebSocket first, fallback to HTTP
+        - VITE_TRANSPORT_PREFERENCE=websocket,http
     image: wallet-frontend-e2e-test:local
     container_name: wallet-frontend-e2e-test
     ports:
@@ -69,6 +71,8 @@ services:
       - WALLET_SERVER_ADMIN_PORT=8081
       - WALLET_SERVER_ADMIN_TOKEN=e2e-test-admin-token-for-testing-purposes-only
       - WALLET_LOG_LEVEL=debug
+      # Enable all roles including engine (for WebSocket support)
+      - WALLET_ROLES=all
       # With network_mode: host, use localhost for PDP too
       - WALLET_TRUST_PDP_URL=http://localhost:9091
       - WALLET_TRUST_ENABLED=true

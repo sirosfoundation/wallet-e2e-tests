@@ -18,6 +18,12 @@
 import { test, expect, request } from '@playwright/test';
 import type { Page } from '@playwright/test';
 import { clearBrowserStorage } from '../../helpers/browser-storage';
+import {
+  fetchBackendStatus,
+  isWebSocketAvailable,
+  getTransportDescription,
+  clearStatusCache,
+} from '../../helpers/backend-capabilities';
 
 // Environment URLs
 const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -418,6 +424,23 @@ async function logoutViaSidebar(page: Page): Promise<void> {
 // =============================================================================
 
 test.describe.configure({ mode: 'serial' });
+
+test.describe('Backend Capabilities', () => {
+  test('detect available transport modes', async ({ request }) => {
+    clearStatusCache();
+
+    const status = await fetchBackendStatus(true);
+    expect(status).not.toBeNull();
+
+    const wsAvailable = await isWebSocketAvailable();
+    const transportDesc = await getTransportDescription();
+
+    console.log(`\n=== Backend Capabilities ===`);
+    console.log(`Transport: ${transportDesc}`);
+    console.log(`WebSocket available: ${wsAvailable}`);
+    console.log(`============================\n`);
+  });
+});
 
 test.describe('TenantSelector - Unauthenticated Mode (Login Page)', () => {
   let tenantA: string;
