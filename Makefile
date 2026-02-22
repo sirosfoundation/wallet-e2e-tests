@@ -33,6 +33,7 @@
 # Service URLs
 FRONTEND_URL ?= http://localhost:3000
 BACKEND_URL ?= http://localhost:8080
+ENGINE_URL ?= http://localhost:8082
 ADMIN_URL ?= http://localhost:8081
 MOCK_ISSUER_URL ?= http://localhost:9000
 MOCK_VERIFIER_URL ?= http://localhost:9001
@@ -50,6 +51,10 @@ BACKEND_PATH ?= ../go-wallet-backend
 
 # Docker compose file
 TEST_COMPOSE_FILE := docker-compose.test.yml
+TS_BACKEND_COMPOSE := docker-compose.ts-backend.yml
+
+# TypeScript backend path (for testing without mode support)
+TS_BACKEND_PATH ?= ../wallet-backend-server
 
 # soft-fido2 runtime files
 SOFT_FIDO2_PID ?= /tmp/soft-fido2.pid
@@ -58,6 +63,7 @@ SOFT_FIDO2_LOG ?= /tmp/soft-fido2.log
 # Common environment for test execution
 TEST_ENV := FRONTEND_URL=$(FRONTEND_URL) \
             BACKEND_URL=$(BACKEND_URL) \
+            ENGINE_URL=$(ENGINE_URL) \
             ADMIN_URL=$(ADMIN_URL) \
             ADMIN_TOKEN=$(ADMIN_TOKEN) \
             ISSUER_URL=$(MOCK_ISSUER_URL) \
@@ -111,6 +117,7 @@ help: ## Show this help
 	@echo "$(GREEN)Service URLs:$(NC)"
 	@echo "  FRONTEND_URL     = $(FRONTEND_URL)"
 	@echo "  BACKEND_URL      = $(BACKEND_URL)"
+	@echo "  ENGINE_URL       = $(ENGINE_URL)"
 	@echo "  ADMIN_URL        = $(ADMIN_URL)"
 	@echo "  VCTM_REGISTRY_URL= $(VCTM_REGISTRY_URL)"
 	@echo ""
@@ -158,6 +165,7 @@ up: start-soft-fido2 ## Start test environment (soft-fido2 + Docker services)
 	@for i in $$(seq 1 120); do \
 		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
 		   curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(ENGINE_URL)/status >/dev/null 2>&1 && \
 		   curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
 		   curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null 2>&1 && \
 		   curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1 && \
@@ -169,6 +177,7 @@ up: start-soft-fido2 ## Start test environment (soft-fido2 + Docker services)
 	@# Final health check with error reporting
 	@curl -sf $(FRONTEND_URL) >/dev/null || (echo "$(RED)Frontend not ready$(NC)"; exit 1)
 	@curl -sf $(BACKEND_URL)/status >/dev/null || (echo "$(RED)Backend not ready$(NC)"; exit 1)
+	@curl -sf $(ENGINE_URL)/status >/dev/null || (echo "$(RED)Engine not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null || (echo "$(RED)Mock issuer not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null || (echo "$(RED)Mock verifier not ready$(NC)"; exit 1)
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null || (echo "$(RED)Mock PDP not ready$(NC)"; exit 1)
@@ -201,9 +210,65 @@ register-mocks: ## Register mock issuer and verifier with backend
 		echo "  $(GREEN)✓$(NC) Mock Verifier: $(MOCK_VERIFIER_URL)" || \
 		echo "  $(RED)✗$(NC) Mock Verifier registration failed"
 
+# =============================================================================
+# Backend Selection (for testing with different backends)
+# =============================================================================
+
+up-ts-backend: start-soft-fido2 ## Start with TypeScript wallet-backend-server (HTTP only)
+	@echo "$(GREEN)Starting test environment with TypeScript backend...$(NC)"
+	@echo "$(YELLOW)Note: WebSocket tests will be skipped with this backend$(NC)"
+	@cp -f dockerfiles/frontend.Dockerfile $(FRONTEND_PATH)/Dockerfile.e2e 2>/dev/null || true
+	@FRONTEND_PATH=$(FRONTEND_PATH) TS_BACKEND_PATH=$(TS_BACKEND_PATH) BACKEND_PATH=$(BACKEND_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) -f $(TS_BACKEND_COMPOSE) build --no-cache
+	@FRONTEND_PATH=$(FRONTEND_PATH) TS_BACKEND_PATH=$(TS_BACKEND_PATH) BACKEND_PATH=$(BACKEND_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) -f $(TS_BACKEND_COMPOSE) up -d
+	@echo "$(GREEN)Waiting for services to be healthy...$(NC)"
+	@for i in $$(seq 1 120); do \
+		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
+		   curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1; then \
+			echo "$(GREEN)All services healthy!$(NC)"; break; \
+		fi; \
+		echo "  Waiting... ($$i/120)"; sleep 2; \
+	done
+	@curl -sf $(FRONTEND_URL) >/dev/null || (echo "$(RED)Frontend not ready$(NC)"; exit 1)
+	@curl -sf $(BACKEND_URL)/status >/dev/null || (echo "$(RED)Backend not ready$(NC)"; exit 1)
+	@$(MAKE) -s register-mocks
+	@echo ""
+	@echo "$(YELLOW)Using TypeScript backend - WebSocket transport not available$(NC)"
+	@echo "$(YELLOW)Run tests with: make test-http$(NC)"
+
+down-ts-backend: stop-soft-fido2 ## Stop TypeScript backend environment
+	@echo "$(YELLOW)Stopping TypeScript backend environment...$(NC)"
+	-@docker compose -f $(TEST_COMPOSE_FILE) -f $(TS_BACKEND_COMPOSE) down -v 2>/dev/null || true
+	@echo "$(GREEN)Environment stopped$(NC)"
+
+check-backend-type: ## Display which backend type is running
+	@echo "$(GREEN)Checking backend type...$(NC)"
+	@STATUS=$$(curl -sf $(BACKEND_URL)/status 2>/dev/null); \
+	if [ -z "$$STATUS" ]; then \
+		echo "$(RED)Backend not reachable$(NC)"; exit 1; \
+	fi; \
+	SERVICE=$$(echo "$$STATUS" | grep -o '"service"[^,}]*' | cut -d'"' -f4); \
+	VERSION=$$(echo "$$STATUS" | grep -o '"version"[^,}]*' | cut -d'"' -f4); \
+	ROLES=$$(echo "$$STATUS" | grep -o '"roles":\[[^]]*\]'); \
+	CAPS=$$(echo "$$STATUS" | grep -o '"capabilities":\[[^]]*\]'); \
+	echo "  Service: $$SERVICE"; \
+	[ -n "$$VERSION" ] && echo "  Version: $$VERSION"; \
+	[ -n "$$ROLES" ] && echo "  Roles: $$ROLES"; \
+	[ -n "$$CAPS" ] && echo "  Capabilities: $$CAPS"; \
+	if echo "$$STATUS" | grep -q '"roles"'; then \
+		echo "$(GREEN)Type: go-wallet-backend (supports modes and WebSocket)$(NC)"; \
+	else \
+		echo "$(YELLOW)Type: wallet-backend-server (HTTP only)$(NC)"; \
+	fi
+
 down: stop-soft-fido2 ## Stop test environment
 	@echo "$(YELLOW)Stopping test environment...$(NC)"
 	-@docker compose -f $(TEST_COMPOSE_FILE) down -v 2>/dev/null || true
+	-@docker compose -f $(TEST_COMPOSE_FILE) -f $(TS_BACKEND_COMPOSE) down -v 2>/dev/null || true
 	@echo "$(GREEN)Environment stopped$(NC)"
 
 logs: ## View service logs
@@ -214,9 +279,12 @@ status: ## Check service status
 	@curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
 		echo "  $(GREEN)✓$(NC) Frontend: $(FRONTEND_URL)" || \
 		echo "  $(RED)✗$(NC) Frontend: $(FRONTEND_URL)"
-	@curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
+	@curl -sf $(BACKEND_URL)/health >/dev/null 2>&1 && \
 		echo "  $(GREEN)✓$(NC) Backend: $(BACKEND_URL)" || \
 		echo "  $(RED)✗$(NC) Backend: $(BACKEND_URL)"
+	@curl -sf $(ENGINE_URL)/status >/dev/null 2>&1 && \
+		echo "  $(GREEN)✓$(NC) Engine: $(ENGINE_URL)" || \
+		echo "  $(RED)✗$(NC) Engine: $(ENGINE_URL)"
 	@curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
 		echo "  $(GREEN)✓$(NC) Mock Issuer: $(MOCK_ISSUER_URL)" || \
 		echo "  $(RED)✗$(NC) Mock Issuer: $(MOCK_ISSUER_URL)"
@@ -279,10 +347,10 @@ test-registry: ## Run VCTM registry tests
 
 # Check if WebSocket is available from backend
 check-ws-available: ## Check if backend supports WebSocket
-	@echo "$(GREEN)Checking backend capabilities...$(NC)"
-	@STATUS=$$(curl -sf $(BACKEND_URL)/status 2>/dev/null); \
+	@echo "$(GREEN)Checking engine server capabilities...$(NC)"
+	@STATUS=$$(curl -sf $(ENGINE_URL)/status 2>/dev/null); \
 	if [ -z "$$STATUS" ]; then \
-		echo "$(RED)Backend not reachable$(NC)"; exit 1; \
+		echo "$(RED)Engine server not reachable$(NC)"; exit 1; \
 	fi; \
 	if echo "$$STATUS" | grep -q '"websocket"'; then \
 		echo "$(GREEN)✓ WebSocket supported$(NC)"; \
@@ -309,8 +377,8 @@ test-all-transports: ## Run test suite for each available transport
 	@# Check backend
 	@curl -sf $(BACKEND_URL)/status >/dev/null || \
 		(echo "$(RED)Backend not running. Run 'make up' first.$(NC)"; exit 1)
-	@# Determine available transports
-	@WS_AVAILABLE=$$(curl -sf $(BACKEND_URL)/status 2>/dev/null | grep -q '"websocket"' && echo yes || echo no); \
+	@# Determine available transports (check engine server for WebSocket)
+	@WS_AVAILABLE=$$(curl -sf $(ENGINE_URL)/status 2>/dev/null | grep -q '"websocket"' && echo yes || echo no); \
 	RESULTS_DIR="test-results/transports-$$(date +%Y%m%d-%H%M%S)"; \
 	mkdir -p "$$RESULTS_DIR"; \
 	PASSED=0; FAILED=0; \

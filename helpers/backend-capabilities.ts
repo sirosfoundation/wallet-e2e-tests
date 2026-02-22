@@ -255,3 +255,81 @@ export async function getAvailableTransportModes(): Promise<TransportMode[]> {
   }
   return modes;
 }
+
+/**
+ * Backend type detection
+ *
+ * Identifies which backend implementation is running:
+ * - 'go-wallet-backend': Go implementation with mode support and WebSocket
+ * - 'wallet-backend-server': Original TypeScript implementation
+ * - 'unknown': Could not determine backend type
+ */
+export type BackendType = 'go-wallet-backend' | 'wallet-backend-server' | 'unknown';
+
+/**
+ * Detect which backend implementation is running
+ *
+ * Uses the service name from /status response to identify the backend.
+ */
+export async function getBackendType(): Promise<BackendType> {
+  const status = await fetchBackendStatus();
+  if (!status) return 'unknown';
+
+  const service = status.service?.toLowerCase() || '';
+
+  // go-wallet-backend reports service as "wallet-backend" or "go-wallet-backend"
+  // and has roles like ["backend", "engine"]
+  if (
+    service.includes('go-wallet') ||
+    (status.roles && status.roles.length > 0) ||
+    (status.capabilities && status.capabilities.includes('websocket'))
+  ) {
+    return 'go-wallet-backend';
+  }
+
+  // wallet-backend-server (TypeScript) typically reports different service name
+  // and doesn't have roles or WebSocket capability
+  if (service.includes('wallet-backend') || service.includes('backend')) {
+    return 'wallet-backend-server';
+  }
+
+  return 'unknown';
+}
+
+/**
+ * Check if backend supports mode-based deployment
+ *
+ * Only go-wallet-backend supports running in different modes
+ * (backend-only, engine-only, all, registry).
+ */
+export async function supportsModes(): Promise<boolean> {
+  const status = await fetchBackendStatus();
+  // Only go-wallet-backend has roles in the status response
+  return !!(status?.roles && status.roles.length > 0);
+}
+
+/**
+ * Get a description of the backend for logging
+ */
+export async function getBackendDescription(): Promise<string> {
+  const status = await fetchBackendStatus();
+  if (!status) return 'Backend not reachable';
+
+  const type = await getBackendType();
+  const parts = [
+    `type: ${type}`,
+    `service: ${status.service}`,
+  ];
+
+  if (status.version) {
+    parts.push(`version: ${status.version}`);
+  }
+  if (status.roles && status.roles.length > 0) {
+    parts.push(`roles: [${status.roles.join(', ')}]`);
+  }
+  if (status.capabilities && status.capabilities.length > 0) {
+    parts.push(`capabilities: [${status.capabilities.join(', ')}]`);
+  }
+
+  return parts.join(', ');
+}

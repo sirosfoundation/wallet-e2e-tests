@@ -85,21 +85,23 @@ const getCredentialIssuerMetadata = () => ({
       proof_types_supported: {
         jwt: { proof_signing_alg_values_supported: ['ES256'] },
       },
-      // claims must be an array with path/mandatory/display per wallet-common schema
-      claims: [
-        { path: ['given_name'], mandatory: true, display: [{ name: 'Given Name', locale: 'en-US' }] },
-        { path: ['family_name'], mandatory: true, display: [{ name: 'Family Name', locale: 'en-US' }] },
-        { path: ['birth_date'], mandatory: false, display: [{ name: 'Birth Date', locale: 'en-US' }] },
-        { path: ['email'], mandatory: false, display: [{ name: 'Email', locale: 'en-US' }] },
-      ],
-      display: [
-        {
-          name: 'Identity Credential',
-          locale: 'en-US',
-          background_color: '#1a5f2a',
-          text_color: '#FFFFFF',
-        },
-      ],
+      // credential_metadata wrapper for display/claims per OID4VCI draft 15 / wallet-common schema
+      credential_metadata: {
+        claims: [
+          { path: ['given_name'], mandatory: true, display: [{ name: 'Given Name', locale: 'en-US' }] },
+          { path: ['family_name'], mandatory: true, display: [{ name: 'Family Name', locale: 'en-US' }] },
+          { path: ['birth_date'], mandatory: false, display: [{ name: 'Birth Date', locale: 'en-US' }] },
+          { path: ['email'], mandatory: false, display: [{ name: 'Email', locale: 'en-US' }] },
+        ],
+        display: [
+          {
+            name: 'Identity Credential',
+            locale: 'en-US',
+            background_color: '#1a5f2a',
+            text_color: '#FFFFFF',
+          },
+        ],
+      },
     },
     // mDL-style mdoc credential
     'eu.europa.ec.eudi.pid.1': {
@@ -107,26 +109,31 @@ const getCredentialIssuerMetadata = () => ({
       doctype: 'eu.europa.ec.eudi.pid.1',
       scope: 'eu.europa.ec.eudi.pid.1',
       cryptographic_binding_methods_supported: ['cose_key'],
-      credential_signing_alg_values_supported: ['ES256'],
+      // mso_mdoc uses COSE algorithm numbers, not string names
+      credential_signing_alg_values_supported: [-7], // -7 = ES256 in COSE
       proof_types_supported: {
         jwt: { proof_signing_alg_values_supported: ['ES256'] },
       },
-      display: [
-        {
-          name: 'EU Digital Identity',
-          locale: 'en-US',
-          background_color: '#12107c',
-          text_color: '#FFFFFF',
-        },
-      ],
+      credential_metadata: {
+        display: [
+          {
+            name: 'EU Digital Identity',
+            locale: 'en-US',
+            background_color: '#12107c',
+            text_color: '#FFFFFF',
+          },
+        ],
+      },
     },
     'org.iso.18013.5.1.mDL': {
       format: 'mso_mdoc',
       doctype: 'org.iso.18013.5.1.mDL',
       scope: 'org.iso.18013.5.1.mDL',
       cryptographic_binding_methods_supported: ['cose_key'],
-      credential_signing_alg_values_supported: ['ES256'],
-      display: [{ name: "Mobile Driver's License", locale: 'en-US' }],
+      credential_signing_alg_values_supported: [-7], // -7 = ES256 in COSE
+      credential_metadata: {
+        display: [{ name: "Mobile Driver's License", locale: 'en-US' }],
+      },
     },
   },
   ...(INCLUDE_IACA ? { mdoc_iacas_uri: `${ISSUER_ID}/mdoc_iacas` } : {}),

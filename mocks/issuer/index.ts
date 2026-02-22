@@ -1,9 +1,14 @@
 /**
  * Mock Issuer Service for E2E Testing
  *
- * Simulates an OpenID4VCI credential issuer with:
+ * Full OpenID4VCI credential issuer implementation with:
  * - /.well-known/openid-credential-issuer endpoint
  * - /.well-known/oauth-authorization-server endpoint
+ * - /offer endpoint to generate credential offers (authorization code flow)
+ * - /par endpoint for pushed authorization requests
+ * - /authorize endpoint (auto-approves and redirects)
+ * - /token endpoint for code exchange
+ * - /credential endpoint for credential issuance
  * - /mdoc_iacas endpoint for IACA certificates
  *
  * Usage:
@@ -13,13 +18,49 @@
  *   PORT - Server port (default: 9000)
  *   ISSUER_ID - Issuer identifier URL (default: http://localhost:9000)
  *   INCLUDE_IACA - Whether to include IACA certificates (default: true)
+ *   DEFAULT_REDIRECT_URI - Default callback URL (default: http://localhost:3000/)
  */
 
 import * as http from 'http';
+import * as urlLib from 'url';
+import * as crypto from 'crypto';
 
 const PORT = parseInt(process.env.PORT || '9000', 10);
 const ISSUER_ID = process.env.ISSUER_ID || `http://localhost:${PORT}`;
 const INCLUDE_IACA = process.env.INCLUDE_IACA !== 'false';
+const DEFAULT_REDIRECT_URI = process.env.DEFAULT_REDIRECT_URI || 'http://localhost:3000/';
+
+// In-memory stores for OAuth state
+const authorizationCodes = new Map<string, {
+  clientId: string;
+  redirectUri: string;
+  codeChallenge?: string;
+  codeChallengeMethod?: string;
+  scope: string;
+  createdAt: number;
+}>();
+
+const accessTokens = new Map<string, {
+  clientId: string;
+  scope: string;
+  createdAt: number;
+  cNonce: string;
+}>();
+
+const parRequests = new Map<string, {
+  clientId: string;
+  redirectUri: string;
+  codeChallenge?: string;
+  codeChallengeMethod?: string;
+  scope: string;
+  state?: string;
+  createdAt: number;
+}>();
+
+// Generate a random string
+function randomString(length: number = 32): string {
+  return crypto.randomBytes(length).toString('base64url').slice(0, length);
+}
 
 // Test IACA certificate (self-signed for testing)
 const TEST_IACA_CERTIFICATE = `-----BEGIN CERTIFICATE-----
@@ -43,7 +84,7 @@ SIb3DQEBCwUAA4IBAQBfakeSignatureDataForTestPurposesOnly123456789
 // Credential issuer metadata
 const credentialIssuerMetadata = {
   credential_issuer: ISSUER_ID,
-  authorization_servers: [`${ISSUER_ID}`],
+  authorization_servers: [ISSUER_ID],
   credential_endpoint: `${ISSUER_ID}/credential`,
   batch_credential_endpoint: `${ISSUER_ID}/batch_credential`,
   deferred_credential_endpoint: `${ISSUER_ID}/deferred_credential`,
@@ -58,6 +99,36 @@ const credentialIssuerMetadata = {
     },
   ],
   credential_configurations_supported: {
+    identity_credential: {
+      format: 'vc+sd-jwt',
+      vct: 'https://credentials.example.com/identity_credential',
+      scope: 'identity_credential',
+      cryptographic_binding_methods_supported: ['jwk'],
+      credential_signing_alg_values_supported: ['ES256'],
+      proof_types_supported: {
+        jwt: {
+          proof_signing_alg_values_supported: ['ES256'],
+        },
+      },
+      display: [
+        {
+          name: 'Identity Credential',
+          locale: 'en-US',
+          logo: {
+            uri: `${ISSUER_ID}/identity-logo.png`,
+            alt_text: 'Identity Logo',
+          },
+          background_color: '#12107c',
+          text_color: '#FFFFFF',
+        },
+      ],
+      claims: {
+        given_name: { display: [{ name: 'Given Name', locale: 'en-US' }] },
+        family_name: { display: [{ name: 'Family Name', locale: 'en-US' }] },
+        email: { display: [{ name: 'Email', locale: 'en-US' }] },
+        birthdate: { display: [{ name: 'Date of Birth', locale: 'en-US' }] },
+      },
+    },
     'eu.europa.ec.eudi.pid.1': {
       format: 'mso_mdoc',
       doctype: 'eu.europa.ec.eudi.pid.1',
@@ -106,29 +177,85 @@ const authorizationServerMetadata = {
   authorization_endpoint: `${ISSUER_ID}/authorize`,
   token_endpoint: `${ISSUER_ID}/token`,
   pushed_authorization_request_endpoint: `${ISSUER_ID}/par`,
-  require_pushed_authorization_requests: true,
+  require_pushed_authorization_requests: false,
   response_types_supported: ['code'],
   response_modes_supported: ['query'],
   grant_types_supported: ['authorization_code', 'urn:ietf:params:oauth:grant-type:pre-authorized_code'],
-  code_challenge_methods_supported: ['S256'],
+  code_challenge_methods_supported: ['S256', 'plain'],
   token_endpoint_auth_methods_supported: ['none'],
-  scopes_supported: ['eu.europa.ec.eudi.pid.1', 'org.iso.18013.5.1.mDL'],
+  scopes_supported: ['identity_credential', 'eu.europa.ec.eudi.pid.1', 'org.iso.18013.5.1.mDL'],
   dpop_signing_alg_values_supported: ['ES256'],
 };
 
-// IACA certificates response - format must match wallet's MdocIacasResponseSchema
-// The schema expects: { iacas: [{ certificate: string }] }
+// IACA certificates response
 const iacaCertificates = {
   iacas: [{ certificate: TEST_IACA_CERTIFICATE }],
 };
 
-function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
-  const url = req.url || '/';
+// Parse request body
+async function parseBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    let body = '';
+    req.on('data', (chunk: Buffer | string) => body += chunk);
+    req.on('end', () => resolve(body));
+    req.on('error', reject);
+  });
+}
+
+// Parse URL-encoded body
+function parseUrlEncoded(body: string): Record<string, string> {
+  const params = new URLSearchParams(body);
+  const result: Record<string, string> = {};
+  params.forEach((value, key) => {
+    result[key] = value;
+  });
+  return result;
+}
+
+// Generate a mock SD-JWT credential
+function generateMockSDJWTCredential(cNonce: string): string {
+  // This is a mock credential - in production this would be a properly signed SD-JWT
+  const header = { alg: 'ES256', typ: 'vc+sd-jwt' };
+  const payload = {
+    iss: ISSUER_ID,
+    iat: Math.floor(Date.now() / 1000),
+    exp: Math.floor(Date.now() / 1000) + 86400 * 365, // 1 year
+    vct: 'https://credentials.example.com/identity_credential',
+    cnf: { jwk: { kty: 'EC', crv: 'P-256', x: 'mock', y: 'mock' } },
+    _sd: ['mockDisclosure1', 'mockDisclosure2'],
+    given_name: 'Test',
+    family_name: 'User',
+    email: 'test@example.com',
+    birthdate: '1990-01-01',
+  };
+  
+  // Create a mock JWT (not cryptographically valid, but structurally correct)
+  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const mockSignature = 'mockSignature123456789';
+  
+  return `${base64Header}.${base64Payload}.${mockSignature}`;
+}
+
+// Verify PKCE code challenge
+function verifyCodeChallenge(codeVerifier: string, codeChallenge: string, method: string = 'S256'): boolean {
+  if (method === 'plain') {
+    return codeVerifier === codeChallenge;
+  }
+  // S256
+  const hash = crypto.createHash('sha256').update(codeVerifier).digest('base64url');
+  return hash === codeChallenge;
+}
+
+async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
+  const parsedUrl = urlLib.parse(req.url || '/', true);
+  const pathname = parsedUrl.pathname || '/';
+  const query = parsedUrl.query as Record<string, string>;
 
   // CORS headers for testing
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, DPoP');
 
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
@@ -136,9 +263,10 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
     return;
   }
 
-  console.log(`[${new Date().toISOString()}] ${req.method} ${url}`);
+  console.log(`[${new Date().toISOString()}] ${req.method} ${pathname}`);
 
-  switch (url) {
+  switch (pathname) {
+    // ===== Well-known endpoints =====
     case '/.well-known/openid-credential-issuer':
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(credentialIssuerMetadata, null, 2));
@@ -149,6 +277,281 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
       res.end(JSON.stringify(authorizationServerMetadata, null, 2));
       break;
 
+    // ===== Credential Offer Generation =====
+    case '/offer': {
+      // Generate a credential offer for authorization code flow
+      const credentialConfigurationId = query.credential || 'identity_credential';
+      
+      // Create a credential offer
+      const offer = {
+        credential_issuer: ISSUER_ID,
+        credential_configuration_ids: [credentialConfigurationId],
+        grants: {
+          authorization_code: {
+            issuer_state: randomString(16),
+          },
+        },
+      };
+      
+      // Return the offer as a credential_offer_uri that points back to this server
+      const offerEncoded = encodeURIComponent(JSON.stringify(offer));
+      const credentialOfferUri = `${ISSUER_ID}/credential-offer?offer=${offerEncoded}`;
+      
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        credential_offer_uri: credentialOfferUri,
+        credential_offer: offer,
+      }));
+      break;
+    }
+
+    case '/credential-offer': {
+      // Return the credential offer object
+      const offerParam = query.offer;
+      if (offerParam) {
+        try {
+          const offer = JSON.parse(decodeURIComponent(offerParam));
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify(offer, null, 2));
+        } catch (e) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_request', error_description: 'Invalid offer parameter' }));
+        }
+      } else {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_request', error_description: 'Missing offer parameter' }));
+      }
+      break;
+    }
+
+    // ===== Pushed Authorization Request (PAR) =====
+    case '/par': {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'method_not_allowed' }));
+        break;
+      }
+
+      const body = await parseBody(req);
+      const params = parseUrlEncoded(body);
+      
+      const requestUri = `urn:ietf:params:oauth:request_uri:${randomString(32)}`;
+      parRequests.set(requestUri, {
+        clientId: params.client_id || 'wallet',
+        redirectUri: params.redirect_uri || DEFAULT_REDIRECT_URI,
+        codeChallenge: params.code_challenge,
+        codeChallengeMethod: params.code_challenge_method || 'S256',
+        scope: params.scope || 'identity_credential',
+        state: params.state,
+        createdAt: Date.now(),
+      });
+
+      console.log(`  PAR created: ${requestUri}`);
+      
+      res.writeHead(201, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        request_uri: requestUri,
+        expires_in: 600,
+      }));
+      break;
+    }
+
+    // ===== Authorization Endpoint =====
+    case '/authorize': {
+      // Auto-approve and redirect with authorization code
+      let clientId = query.client_id || 'wallet';
+      let redirectUri = query.redirect_uri || DEFAULT_REDIRECT_URI;
+      let codeChallenge = query.code_challenge;
+      let codeChallengeMethod = query.code_challenge_method || 'S256';
+      let scope = query.scope || 'identity_credential';
+      let state = query.state;
+
+      // Check for PAR request_uri
+      if (query.request_uri) {
+        const parData = parRequests.get(query.request_uri);
+        if (parData) {
+          clientId = parData.clientId;
+          redirectUri = parData.redirectUri;
+          codeChallenge = parData.codeChallenge;
+          codeChallengeMethod = parData.codeChallengeMethod || 'S256';
+          scope = parData.scope;
+          state = parData.state;
+          parRequests.delete(query.request_uri);
+        } else {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_request', error_description: 'Invalid or expired request_uri' }));
+          break;
+        }
+      }
+
+      // Generate authorization code
+      const code = randomString(32);
+      authorizationCodes.set(code, {
+        clientId,
+        redirectUri,
+        codeChallenge,
+        codeChallengeMethod,
+        scope,
+        createdAt: Date.now(),
+      });
+
+      console.log(`  Auth code generated: ${code.substring(0, 8)}... for scope: ${scope}`);
+
+      // Build redirect URL
+      const redirectUrl = new URL(redirectUri);
+      redirectUrl.searchParams.set('code', code);
+      if (state) {
+        redirectUrl.searchParams.set('state', state);
+      }
+      if (query.issuer_state) {
+        redirectUrl.searchParams.set('issuer_state', query.issuer_state);
+      }
+
+      console.log(`  Redirecting to: ${redirectUrl.toString()}`);
+      
+      res.writeHead(302, { Location: redirectUrl.toString() });
+      res.end();
+      break;
+    }
+
+    // ===== Token Endpoint =====
+    case '/token': {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'method_not_allowed' }));
+        break;
+      }
+
+      const body = await parseBody(req);
+      const params = parseUrlEncoded(body);
+
+      if (params.grant_type === 'authorization_code') {
+        const codeData = authorizationCodes.get(params.code);
+        
+        if (!codeData) {
+          console.log(`  Invalid code: ${params.code?.substring(0, 8)}...`);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'Invalid or expired authorization code' }));
+          break;
+        }
+
+        // Verify PKCE if code challenge was provided
+        if (codeData.codeChallenge && params.code_verifier) {
+          if (!verifyCodeChallenge(params.code_verifier, codeData.codeChallenge, codeData.codeChallengeMethod)) {
+            console.log(`  PKCE verification failed`);
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'invalid_grant', error_description: 'Invalid code_verifier' }));
+            break;
+          }
+        }
+
+        // Delete used code
+        authorizationCodes.delete(params.code);
+
+        // Generate access token and c_nonce
+        const accessToken = randomString(32);
+        const cNonce = randomString(16);
+        
+        accessTokens.set(accessToken, {
+          clientId: codeData.clientId,
+          scope: codeData.scope,
+          createdAt: Date.now(),
+          cNonce,
+        });
+
+        console.log(`  Token issued: ${accessToken.substring(0, 8)}... with c_nonce: ${cNonce}`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          access_token: accessToken,
+          token_type: 'Bearer',
+          expires_in: 3600,
+          c_nonce: cNonce,
+          c_nonce_expires_in: 86400,
+          authorization_details: [{
+            type: 'openid_credential',
+            credential_configuration_id: codeData.scope,
+          }],
+        }));
+      } else {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unsupported_grant_type' }));
+      }
+      break;
+    }
+
+    // ===== Credential Endpoint =====
+    case '/credential': {
+      if (req.method !== 'POST') {
+        res.writeHead(405, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'method_not_allowed' }));
+        break;
+      }
+
+      // Verify access token
+      const authHeader = req.headers.authorization;
+      if (!authHeader || !authHeader.startsWith('Bearer ')) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_token' }));
+        break;
+      }
+
+      const token = authHeader.substring(7);
+      const tokenData = accessTokens.get(token);
+      
+      if (!tokenData) {
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_token', error_description: 'Invalid or expired access token' }));
+        break;
+      }
+
+      const body = await parseBody(req);
+      let credentialRequest;
+      try {
+        credentialRequest = JSON.parse(body);
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'invalid_request', error_description: 'Invalid JSON body' }));
+        break;
+      }
+
+      console.log(`  Credential request:`, JSON.stringify(credentialRequest).substring(0, 200));
+
+      // Generate a new c_nonce for the response
+      const newCNonce = randomString(16);
+      tokenData.cNonce = newCNonce;
+
+      // Return mock credential based on format
+      const format = credentialRequest.format || 'vc+sd-jwt';
+      
+      if (format === 'vc+sd-jwt') {
+        const credential = generateMockSDJWTCredential(tokenData.cNonce);
+        console.log(`  Issuing SD-JWT credential`);
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          credential,
+          c_nonce: newCNonce,
+          c_nonce_expires_in: 86400,
+        }));
+      } else if (format === 'mso_mdoc') {
+        // Return a mock mDL (in practice this would be a CBOR-encoded mdoc)
+        console.log(`  Issuing mso_mdoc credential (mock)`);
+        
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+          credential: 'mock_mdoc_credential_base64',
+          c_nonce: newCNonce,
+          c_nonce_expires_in: 86400,
+        }));
+      } else {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'unsupported_credential_format' }));
+      }
+      break;
+    }
+
+    // ===== IACA Certificates =====
     case '/mdoc_iacas':
       if (INCLUDE_IACA) {
         res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -159,14 +562,25 @@ function handleRequest(req: http.IncomingMessage, res: http.ServerResponse) {
       }
       break;
 
+    // ===== Health Check =====
     case '/health':
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ status: 'ok', issuer: ISSUER_ID }));
       break;
 
+    // ===== Logo/Assets =====
+    case '/logo.png':
+    case '/identity-logo.png':
+    case '/pid-logo.png':
+      // Return a simple 1x1 transparent PNG
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+      res.writeHead(200, { 'Content-Type': 'image/png' });
+      res.end(png);
+      break;
+
     default:
       res.writeHead(404, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Not found', path: url }));
+      res.end(JSON.stringify({ error: 'Not found', path: pathname }));
   }
 }
 
@@ -174,8 +588,15 @@ const server = http.createServer(handleRequest);
 
 server.listen(PORT, () => {
   console.log(`Mock Issuer Service running on ${ISSUER_ID}`);
+  console.log(`\nEndpoints:`);
   console.log(`  /.well-known/openid-credential-issuer - Credential issuer metadata`);
   console.log(`  /.well-known/oauth-authorization-server - Authorization server metadata`);
+  console.log(`  /offer - Generate credential offer (GET ?credential=identity_credential)`);
+  console.log(`  /credential-offer - Fetch credential offer by URI`);
+  console.log(`  /par - Pushed Authorization Request (POST)`);
+  console.log(`  /authorize - Authorization endpoint (auto-approves)`);
+  console.log(`  /token - Token endpoint (POST)`);
+  console.log(`  /credential - Credential endpoint (POST)`);
   if (INCLUDE_IACA) {
     console.log(`  /mdoc_iacas - IACA certificates`);
   }
