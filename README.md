@@ -52,6 +52,7 @@ make up SOFT_FIDO2_PATH=/path/to/soft-fido2 FRONTEND_PATH=/path/to/frontend
 | `make test-credential` | Credential issuance & verification flow |
 | `make test-tenant` | Tenant selector component tests |
 | `make test-registry` | VCTM registry API tests |
+| `make test-trust` | Trust integration tests (go-trust compatibility) |
 
 ## CI Usage
 
@@ -107,13 +108,17 @@ wallet-e2e-tests/
 │   └── real-webauthn/           # WebAuthn UI tests (headed)
 │       ├── user-flows.spec.ts   # Registration, login, multi-tenancy
 │       ├── credential-flow.spec.ts  # VCI/VP flows
-│       └── tenant-selector.spec.ts
+│       ├── tenant-selector.spec.ts
+│       └── trust-integration.spec.ts  # Trust/go-trust integration
 ├── helpers/                     # Shared test utilities
 │   ├── ui-actions.ts            # UI interaction helpers
 │   ├── tenant-api.ts            # Admin tenant API
 │   ├── issuer-api.ts            # Admin issuer API
 │   └── trust-api.ts             # Trust API helpers
 ├── mocks/                       # Mock issuer, verifier, PDP
+│   ├── issuer/                  # OpenID4VCI mock issuer
+│   ├── verifier/                # OpenID4VP mock verifier
+│   └── trust-pdp/               # Mock AuthZEN PDP (go-trust compatible)
 ├── playwright.config.ts         # Default config (API tests)
 └── playwright.real-webauthn.config.ts  # WebAuthn config (headed)
 ```

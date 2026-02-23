@@ -11,6 +11,7 @@
     "test:webauthn:ui": "playwright test --config=playwright.real-webauthn.config.ts --ui",
     "test:credential": "playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/credential-flow.spec.ts",
     "test:tenant": "playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/tenant-selector.spec.ts",
+    "test:trust": "playwright test --config=playwright.real-webauthn.config.ts specs/real-webauthn/trust-integration.spec.ts",
     "test:registry": "playwright test specs/api/registry.spec.ts",
     "test:all": "npm run test:api && npm run test:webauthn",
     "test:headed": "playwright test --headed",

@@ -104,6 +104,7 @@ help: ## Show this help
 	@echo "  make test-credential # Credential flow tests"
 	@echo "  make test-tenant    # Tenant selector tests"
 	@echo "  make test-registry  # VCTM registry tests"
+	@echo "  make test-trust     # Trust integration tests (go-trust)"
 	@echo ""
 	@echo "$(GREEN)CI Targets (with Xvfb):$(NC)"
 	@echo "  make tests-ci       # All tests with virtual display"
@@ -340,6 +341,13 @@ test-registry: ## Run VCTM registry tests
 	@curl -sf $(VCTM_REGISTRY_URL)/status >/dev/null || \
 		(echo "$(RED)Registry not running. Run 'make up' first.$(NC)"; exit 1)
 	$(TEST_ENV) npx playwright test specs/api/registry.spec.ts --reporter=list
+
+test-trust: ## Run trust integration tests (go-trust compatibility)
+	@echo "$(GREEN)Running trust integration tests...$(NC)"
+	@curl -sf $(MOCK_PDP_URL)/health >/dev/null || \
+		(echo "$(RED)Mock PDP not running. Run 'make up' first.$(NC)"; exit 1)
+	$(TEST_ENV) npx playwright test --config=playwright.real-webauthn.config.ts \
+		specs/real-webauthn/trust-integration.spec.ts --reporter=list
 
 # =============================================================================
 # Transport Mode Testing
