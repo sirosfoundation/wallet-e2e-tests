@@ -281,9 +281,9 @@ up-vc: start-soft-fido2 ## Start with VC services (production issuer/verifier)
 	-@docker network create e2e-test-network 2>/dev/null || true
 	@# Start VC services
 	@docker compose -f $(VC_SERVICES_COMPOSE) up -d
-	@# Start base test services (wallet, pdp, registry)
+	@# Start base test services (wallet, pdp, registry) - use --no-deps to avoid starting mock-issuer/verifier
 	@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) \
-		docker compose -f $(TEST_COMPOSE_FILE) up -d wallet-frontend wallet-backend mock-trust-pdp vctm-registry
+		docker compose -f $(TEST_COMPOSE_FILE) up -d --no-deps wallet-frontend wallet-backend mock-trust-pdp vctm-registry
 	@echo "$(GREEN)Waiting for services to be healthy...$(NC)"
 	@for i in $$(seq 1 180); do \
 		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \

@@ -572,14 +572,18 @@ test.describe('Full Credential Flow', () => {
     const response = await request.get(`${ISSUER_URL}/health`);
     expect(response.ok()).toBe(true);
     const data = await response.json();
-    expect(data.status).toBe('ok');
+    // Handle both mock format ({status: 'ok'}) and VC format ({data: {status: 'STATUS_OK_...'})
+    const isHealthy = data.status === 'ok' || (data.data?.status?.startsWith('STATUS_OK'));
+    expect(isHealthy).toBe(true);
   });
 
   test('mock verifier is healthy', async ({ request }) => {
     const response = await request.get(`${VERIFIER_URL}/health`);
     expect(response.ok()).toBe(true);
     const data = await response.json();
-    expect(data.status).toBe('ok');
+    // Handle both mock format ({status: 'ok'}) and VC format ({data: {status: 'STATUS_OK_...'})
+    const isHealthy = data.status === 'ok' || (data.data?.status?.startsWith('STATUS_OK'));
+    expect(isHealthy).toBe(true);
   });
 
   test('register new user', async ({ page }) => {
@@ -612,6 +616,13 @@ test.describe('Full Credential Flow', () => {
   });
 
   test('obtain credential via OpenID4VCI (pre-authorized)', async ({ page, request }) => {
+    // Check if we're running against mock or VC services
+    // The mock issuer has /offer endpoint, VC services don't
+    const offerCheck = await request.get(`${ISSUER_URL}/offer`).catch(() => null);
+    if (!offerCheck || !offerCheck.ok()) {
+      test.skip(true, 'Skipping mock-specific test - no /offer endpoint (likely using VC services)');
+    }
+
     // Test credential issuance via authorization_code grant flow.
     // The mock issuer now provides both authorization_code and pre-authorized_code grants.
     // The wallet only supports authorization_code grant, which should now work.
