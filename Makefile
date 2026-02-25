@@ -24,6 +24,7 @@
         test-http test-ws test-all-transports check-ws-available \
         tests-ci test-api-ci test-webauthn-ci \
         start-soft-fido2 stop-soft-fido2 \
+        up-vc down-vc test-vc test-all-services \
         clean clean-all
 
 # =============================================================================
@@ -52,6 +53,7 @@ BACKEND_PATH ?= ../go-wallet-backend
 # Docker compose file
 TEST_COMPOSE_FILE := docker-compose.test.yml
 TS_BACKEND_COMPOSE := docker-compose.ts-backend.yml
+VC_SERVICES_COMPOSE := docker-compose.vc-services.yml
 
 # TypeScript backend path (for testing without mode support)
 TS_BACKEND_PATH ?= ../wallet-backend-server
@@ -92,6 +94,12 @@ help: ## Show this help
 	@echo "  make up       # Start environment (soft-fido2 + Docker services)"
 	@echo "  make tests    # Run all tests (API + WebAuthn)"
 	@echo "  make down     # Stop everything"
+	@echo ""
+	@echo "$(GREEN)VC Services (Production-grade issuer/verifier):$(NC)"
+	@echo "  make up-vc            # Start with VC services (issuer/verifier/mockas)"
+	@echo "  make test-vc          # Run tests using VC services"
+	@echo "  make down-vc          # Stop VC services"
+	@echo "  make test-all-services # Run tests with mock then VC services"
 	@echo ""
 	@echo "$(GREEN)Transport Mode Testing:$(NC)"
 	@echo "  make test-http           # Force HTTP transport"
@@ -245,6 +253,126 @@ down-ts-backend: stop-soft-fido2 ## Stop TypeScript backend environment
 	@echo "$(YELLOW)Stopping TypeScript backend environment...$(NC)"
 	-@docker compose -f $(TEST_COMPOSE_FILE) -f $(TS_BACKEND_COMPOSE) down -v 2>/dev/null || true
 	@echo "$(GREEN)Environment stopped$(NC)"
+
+# =============================================================================
+# VC Services (Production-grade issuer/verifier)
+# =============================================================================
+# Uses SUNET VC project's issuer, verifier, and mockas containers
+# instead of the simple mock services for more comprehensive testing.
+
+# VC Service URLs (override ports 9000/9001 with production VC services)
+VC_ISSUER_URL ?= http://localhost:9000
+VC_VERIFIER_URL ?= http://localhost:9001
+VC_MOCKAS_URL ?= http://localhost:9002
+
+up-vc: start-soft-fido2 ## Start with VC services (production issuer/verifier)
+	@echo "$(GREEN)Starting test environment with VC services...$(NC)"
+	@# Ensure PKI exists
+	@if [ ! -f "fixtures/vc-pki/signing_ec_private.pem" ]; then \
+		echo "$(GREEN)Generating PKI certificates...$(NC)"; \
+		./fixtures/create-pki.sh; \
+	fi
+	@# Copy Dockerfile to frontend context
+	@cp -f dockerfiles/frontend.Dockerfile $(FRONTEND_PATH)/Dockerfile.e2e 2>/dev/null || true
+	@# Build and start base services (without mock issuer/verifier)
+	@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) build --no-cache
+	@# Create network first if not exists
+	-@docker network create e2e-test-network 2>/dev/null || true
+	@# Start VC services
+	@docker compose -f $(VC_SERVICES_COMPOSE) up -d
+	@# Start base test services (wallet, pdp, registry)
+	@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) up -d wallet-frontend wallet-backend mock-trust-pdp vctm-registry
+	@echo "$(GREEN)Waiting for services to be healthy...$(NC)"
+	@for i in $$(seq 1 180); do \
+		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
+		   curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(ENGINE_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(VC_ISSUER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(VC_VERIFIER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_PDP_URL)/health >/dev/null 2>&1; then \
+			echo "$(GREEN)All services healthy!$(NC)"; break; \
+		fi; \
+		echo "  Waiting... ($$i/180)"; sleep 2; \
+	done
+	@curl -sf $(FRONTEND_URL) >/dev/null || (echo "$(RED)Frontend not ready$(NC)"; exit 1)
+	@curl -sf $(BACKEND_URL)/status >/dev/null || (echo "$(RED)Backend not ready$(NC)"; exit 1)
+	@curl -sf $(VC_ISSUER_URL)/health >/dev/null || (echo "$(RED)VC Issuer not ready$(NC)"; exit 1)
+	@curl -sf $(VC_VERIFIER_URL)/health >/dev/null || (echo "$(RED)VC Verifier not ready$(NC)"; exit 1)
+	@# Register VC services
+	@$(MAKE) -s register-vc-services
+	@echo ""
+	@echo "$(GREEN)VC Services environment ready$(NC)"
+	@echo "  Issuer:   $(VC_ISSUER_URL)"
+	@echo "  Verifier: $(VC_VERIFIER_URL)"
+	@echo "  MockAS:   $(VC_MOCKAS_URL)"
+
+register-vc-services: ## Register VC issuer and verifier with backend
+	@echo "$(GREEN)Registering VC services...$(NC)"
+	@curl -sf -X POST $(ADMIN_URL)/admin/tenants/default/issuers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" \
+		-H "Content-Type: application/json" \
+		-d '{"credential_issuer_identifier": "$(VC_ISSUER_URL)", "client_id": "e2e-test-client", "visible": true}' \
+		>/dev/null 2>&1 || true
+	@curl -sf $(ADMIN_URL)/admin/tenants/default/issuers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" | \
+		grep -q "$(VC_ISSUER_URL)" && \
+		echo "  $(GREEN)✓$(NC) VC Issuer: $(VC_ISSUER_URL)" || \
+		echo "  $(RED)✗$(NC) VC Issuer registration failed"
+	@curl -sf -X POST $(ADMIN_URL)/admin/tenants/default/verifiers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" \
+		-H "Content-Type: application/json" \
+		-d '{"name": "E2E VC Verifier", "url": "$(VC_VERIFIER_URL)"}' \
+		>/dev/null 2>&1 || true
+	@curl -sf $(ADMIN_URL)/admin/tenants/default/verifiers \
+		-H "Authorization: Bearer $(ADMIN_TOKEN)" | \
+		grep -q "$(VC_VERIFIER_URL)" && \
+		echo "  $(GREEN)✓$(NC) VC Verifier: $(VC_VERIFIER_URL)" || \
+		echo "  $(RED)✗$(NC) VC Verifier registration failed"
+
+down-vc: stop-soft-fido2 ## Stop VC services environment
+	@echo "$(YELLOW)Stopping VC services environment...$(NC)"
+	-@docker compose -f $(VC_SERVICES_COMPOSE) down -v 2>/dev/null || true
+	-@docker compose -f $(TEST_COMPOSE_FILE) down -v 2>/dev/null || true
+	@echo "$(GREEN)Environment stopped$(NC)"
+
+test-vc: ## Run tests with VC services (assumes up-vc was run)
+	@echo "$(GREEN)Running tests with VC services...$(NC)"
+	@curl -sf $(VC_ISSUER_URL)/health >/dev/null || \
+		(echo "$(RED)VC Issuer not running. Run 'make up-vc' first.$(NC)"; exit 1)
+	$(TEST_ENV) ISSUER_URL=$(VC_ISSUER_URL) VERIFIER_URL=$(VC_VERIFIER_URL) \
+		npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
+
+test-all-services: ## Run tests with mock services then VC services
+	@echo "$(GREEN)╔════════════════════════════════════════════════════════════════╗$(NC)"
+	@echo "$(GREEN)║       Running tests with all service configurations            ║$(NC)"
+	@echo "$(GREEN)╚════════════════════════════════════════════════════════════════╝$(NC)"
+	@echo ""
+	@RESULTS_DIR="test-results/services-$$(date +%Y%m%d-%H%M%S)"; \
+	mkdir -p "$$RESULTS_DIR"; \
+	PASSED=0; FAILED=0; \
+	echo "$(GREEN)━━━ Mock Services ━━━$(NC)"; \
+	$(MAKE) down 2>/dev/null || true; \
+	$(MAKE) up; \
+	if $(MAKE) tests; then \
+		echo "$(GREEN)✓ Mock services tests passed$(NC)"; PASSED=$$((PASSED + 1)); \
+	else \
+		echo "$(RED)✗ Mock services tests failed$(NC)"; FAILED=$$((FAILED + 1)); \
+	fi; \
+	$(MAKE) down; \
+	echo ""; \
+	echo "$(GREEN)━━━ VC Services ━━━$(NC)"; \
+	$(MAKE) up-vc; \
+	if $(MAKE) test-vc; then \
+		echo "$(GREEN)✓ VC services tests passed$(NC)"; PASSED=$$((PASSED + 1)); \
+	else \
+		echo "$(RED)✗ VC services tests failed$(NC)"; FAILED=$$((FAILED + 1)); \
+	fi; \
+	$(MAKE) down-vc; \
+	echo ""; \
+	echo "$(GREEN)Summary: Passed=$$PASSED Failed=$$FAILED$(NC)"; \
+	if [ $$FAILED -gt 0 ]; then exit 1; fi
 
 check-backend-type: ## Display which backend type is running
 	@echo "$(GREEN)Checking backend type...$(NC)"

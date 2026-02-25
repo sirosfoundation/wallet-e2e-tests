@@ -33,3 +33,6 @@ Thumbs.db
 
 # Git workspace (cloned repos for testing)
 .workspace/
+
+# Generated PKI for VC services (regenerate with fixtures/create-pki.sh)
+fixtures/vc-pki/
