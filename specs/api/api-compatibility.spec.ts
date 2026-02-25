@@ -7,6 +7,7 @@
  * are compatible, without requiring the full WebAuthn PRF flow.
  */
 
+import crypto from 'crypto';
 import { test, expect, type APIRequestContext } from '@playwright/test';
 
 const BACKEND_URL = process.env.BACKEND_URL || 'http://localhost:8080';
