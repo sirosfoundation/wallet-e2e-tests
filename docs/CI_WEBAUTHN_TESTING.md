@@ -9,6 +9,58 @@ This guide documents the two-track approach for WebAuthn testing with PRF extens
 | **CDP Track** | Chrome DevTools Protocol + PRF mock | ✅ Via JS injection | ✅ Fully headless | CI/CD pipelines |
 | **soft-fido2 Track** | UHID virtual authenticator | ✅ Native | ❌ Requires display | Local development |
 
+## Shared Test Infrastructure
+
+Both test tracks share the same test definitions to ensure consistency:
+
+```
+helpers/
+  shared-helpers.ts      # Common utilities (tenant mgmt, ID generation)
+  webauthn-adapter.ts    # Abstract adapter interface + implementations
+
+specs/
+  shared/
+    user-flows.shared.ts # Test definitions (used by both tracks)
+  
+  webauthn-ci/
+    shared-tests.spec.ts # CDP runner (imports shared tests)
+    
+  real-webauthn/
+    shared-tests.spec.ts # soft-fido2 runner (imports shared tests)
+```
+
+### Adding New Shared Tests
+
+1. Add test definition to `specs/shared/user-flows.shared.ts`:
+
+```typescript
+export function defineMyNewTests(
+  test: TestType<...>,
+  adapterInfo: () => WebAuthnAdapterInfo
+) {
+  test.describe('My New Tests', () => {
+    test('should do something', async ({ page, webauthnAdapter }) => {
+      const info = adapterInfo();
+      // Adapter-aware test logic
+      if (info.prfMocked) {
+        // CDP-specific handling
+      }
+    });
+  });
+}
+```
+
+2. Export from `allSharedTests`:
+
+```typescript
+export const allSharedTests = {
+  // ... existing
+  myNewTests: defineMyNewTests,
+};
+```
+
+3. Both runners automatically include the new tests.
+
 ## The PRF Requirement
 
 The wallet uses WebAuthn's PRF (Pseudo-Random Function) extension for key derivation. Without PRF support, the wallet cannot derive the symmetric keys needed for secure credential storage.
