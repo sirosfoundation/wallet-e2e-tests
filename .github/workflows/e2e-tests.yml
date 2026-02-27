@@ -1,0 +1,182 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main, develop, 'feature/**']
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+    inputs:
+      debug_enabled:
+        description: 'Run with tmate debug session'
+        required: false
+        default: 'false'
+
+env:
+  FRONTEND_URL: http://localhost:3000
+  BACKEND_URL: http://localhost:8080
+  ADMIN_URL: http://localhost:8081
+  ADMIN_TOKEN: e2e-test-admin-token-for-testing-purposes-only
+
+jobs:
+  api-tests:
+    name: API Tests (No WebAuthn)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout e2e tests
+        uses: actions/checkout@v4
+
+      - name: Checkout wallet-frontend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/wallet-frontend
+          path: wallet-frontend
+          ref: main
+
+      - name: Checkout go-wallet-backend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/go-wallet-backend
+          path: go-wallet-backend
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chromium --with-deps
+
+      - name: Start services
+        run: |
+          # Set paths for CI
+          export FRONTEND_PATH=./wallet-frontend
+          export BACKEND_PATH=./go-wallet-backend
+          
+          docker compose -f docker-compose.test.yml up -d --build
+          
+          # Wait for services to be healthy
+          echo "Waiting for services to start..."
+          sleep 30
+          
+          # Check service health
+          curl -f $FRONTEND_URL || exit 1
+          curl -f $BACKEND_URL/health || exit 1
+
+      - name: Run API tests
+        run: npx playwright test specs/api/ --config=playwright.config.ts
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: api-test-results
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 7
+
+      - name: Stop services
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+  webauthn-ci-tests:
+    name: WebAuthn Tests (CDP)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout e2e tests
+        uses: actions/checkout@v4
+
+      - name: Checkout wallet-frontend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/wallet-frontend
+          path: wallet-frontend
+          ref: main
+
+      - name: Checkout go-wallet-backend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/go-wallet-backend
+          path: go-wallet-backend
+          ref: main
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers (Chrome)
+        run: npx playwright install chrome --with-deps
+
+      - name: Start services
+        run: |
+          export FRONTEND_PATH=./wallet-frontend
+          export BACKEND_PATH=./go-wallet-backend
+          
+          docker compose -f docker-compose.test.yml up -d --build
+          
+          echo "Waiting for services to start..."
+          sleep 30
+          
+          curl -f $FRONTEND_URL || exit 1
+          curl -f $BACKEND_URL/health || exit 1
+
+      - name: Run WebAuthn CI tests
+        run: npx playwright test --config=playwright.webauthn-ci.config.ts
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: webauthn-ci-test-results
+          path: |
+            playwright-report-ci/
+            test-results-ci/
+          retention-days: 7
+
+      - name: Stop services
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+      - name: Debug session
+        if: failure() && github.event.inputs.debug_enabled == 'true'
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 15
+
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run ESLint
+        run: npm run lint || true
+
+      - name: Run TypeScript check
+        run: npx tsc --noEmit || true

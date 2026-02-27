@@ -114,8 +114,10 @@ help: ## Show this help
 	@echo "  make test-registry  # VCTM registry tests"
 	@echo "  make test-trust     # Trust integration tests (go-trust)"
 	@echo ""
-	@echo "$(GREEN)CI Targets (with Xvfb):$(NC)"
-	@echo "  make tests-ci       # All tests with virtual display"
+	@echo "$(GREEN)CI Targets (headless):$(NC)"
+	@echo "  make tests-ci           # All CI tests (API + CDP WebAuthn)"
+	@echo "  make test-webauthn-cdp-ci # CDP WebAuthn tests (headless, no Xvfb)"
+	@echo "  make ci-full            # CI with soft-fido2 tests (needs Xvfb)"
 	@echo ""
 	@echo "$(GREEN)Configuration:$(NC)"
 	@echo "  TRANSPORT_MODE  = $(TRANSPORT_MODE) (auto|http|websocket)"
@@ -551,16 +553,22 @@ test-all-transports: ## Run test suite for each available transport
 	if [ $$FAILED -gt 0 ]; then exit 1; fi
 
 # =============================================================================
-# CI Targets (with Xvfb virtual display)
+# CI Targets
 # =============================================================================
 
-tests-ci: test-api-ci test-webauthn-ci ## Run all tests with Xvfb (CI mode)
+tests-ci: test-api-ci test-webauthn-cdp-ci ## Run all CI tests (API + CDP WebAuthn)
 
 test-api-ci: ## Run API tests in CI (headless)
 	@echo "$(GREEN)Running API tests (CI)...$(NC)"
 	$(TEST_ENV) npx playwright test specs/api/ --reporter=list
 
-test-webauthn-ci: ## Run WebAuthn tests with Xvfb (CI mode)
+# CDP-based WebAuthn tests - fully headless, no display required
+test-webauthn-cdp-ci: ## Run WebAuthn tests with CDP (headless, CI-compatible)
+	@echo "$(GREEN)Running WebAuthn tests with CDP + PRF mock (headless)...$(NC)"
+	$(TEST_ENV) npx playwright test --config=playwright.webauthn-ci.config.ts --reporter=list
+
+# Legacy Xvfb-based soft-fido2 tests (requires display server)
+test-webauthn-xvfb: ## Run WebAuthn tests with Xvfb (soft-fido2, requires display)
 	@echo "$(GREEN)Running WebAuthn UI tests with Xvfb...$(NC)"
 	@command -v xvfb-run >/dev/null 2>&1 || \
 		(echo "$(RED)xvfb-run not found. Install: apt-get install xvfb$(NC)"; exit 1)
@@ -569,6 +577,9 @@ test-webauthn-ci: ## Run WebAuthn tests with Xvfb (CI mode)
 
 # Full CI cycle
 ci: up tests-ci down ## Full CI: start → test → cleanup
+
+# Comprehensive CI (includes soft-fido2 tests via Xvfb)
+ci-full: up test-api-ci test-webauthn-cdp-ci test-webauthn-xvfb down ## Full CI with soft-fido2 tests
 
 # =============================================================================
 # Debug Targets
@@ -600,7 +611,8 @@ clean-all: clean ## Remove all generated files
 run: tests ## Alias for 'tests'
 test: tests ## Alias for 'tests'
 test-real-webauthn: test-webauthn ## Alias for 'test-webauthn'
-test-real-webauthn-ci: test-webauthn-ci ## Alias for 'test-webauthn-ci'
+test-webauthn-ci: test-webauthn-cdp-ci ## Alias for 'test-webauthn-cdp-ci' (new CI-compatible)
+test-real-webauthn-ci: test-webauthn-xvfb ## Alias for 'test-webauthn-xvfb' (soft-fido2 with Xvfb)
 test-credential-flow: test-credential ## Alias for 'test-credential'
 ci-docker: ci ## Alias for 'ci'
 ci-real-webauthn: ci ## Alias for 'ci'

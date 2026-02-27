@@ -16,7 +16,8 @@
     "specs/**/*.ts",
     "mocks/**/*.ts",
     "playwright.config.ts",
-    "playwright.real-webauthn.config.ts"
+    "playwright.real-webauthn.config.ts",
+    "playwright.webauthn-ci.config.ts"
   ],
   "exclude": [
     "node_modules"
