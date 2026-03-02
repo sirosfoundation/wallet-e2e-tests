@@ -19,7 +19,7 @@ services:
     container_name: go-trust-allow-e2e-test
     ports:
       - "9091:6001"  # Map mock-trust-pdp port to go-trust
-    command: ["--mode", "static:always-trusted", "--host", "0.0.0.0", "--port", "6001"]
+    command: ["--registry", "static:always-trusted", "--host", "0.0.0.0", "--port", "6001"]
     environment:
       - GO_TRUST_EXTERNAL_URL=http://localhost:9091
     healthcheck:
@@ -39,9 +39,31 @@ services:
     container_name: go-trust-deny-e2e-test
     ports:
       - "9092:6001"
-    command: ["--mode", "static:never-trusted", "--host", "0.0.0.0", "--port", "6001"]
+    command: ["--registry", "static:never-trusted", "--host", "0.0.0.0", "--port", "6001"]
     environment:
       - GO_TRUST_EXTERNAL_URL=http://localhost:9092
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:6001/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks:
+      - e2e-test-network
+
+  # Go Trust PDP - Whitelist registry for testing with specific issuers
+  go-trust-whitelist:
+    build:
+      context: ${GO_TRUST_PATH:-../go-trust}
+      dockerfile: Dockerfile
+    image: go-trust-e2e-test:local
+    container_name: go-trust-whitelist-e2e-test
+    ports:
+      - "9093:6001"
+    command: ["--registry", "whitelist", "--whitelist", "/app/whitelist.txt", "--host", "0.0.0.0", "--port", "6001"]
+    environment:
+      - GO_TRUST_EXTERNAL_URL=http://localhost:9093
+    volumes:
+      - ./fixtures/go-trust-whitelist.txt:/app/whitelist.txt:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:6001/healthz"]
       interval: 3s
