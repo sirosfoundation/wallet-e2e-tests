@@ -1,9 +1,14 @@
 # Wallet E2E Tests Makefile
 #
-# Primary Workflow:
-#   make up      # Start fresh environment (soft-fido2 + Docker services)
-#   make tests   # Run all tests (API + WebAuthn)
-#   make down    # Stop everything
+# Primary Workflow (CDP - headless, CI-compatible):
+#   make up      # Start Docker services only (no soft-fido2 needed)
+#   make test    # Run all tests using CDP virtual authenticator
+#   make down    # Stop Docker services
+#
+# Soft-FIDO2 Workflow (browser-based, requires display):
+#   make up-soft-fido2    # Start soft-fido2 + Docker services
+#   make test-soft-fido2  # Run tests with soft-fido2 authenticator
+#   make down-soft-fido2  # Stop everything including soft-fido2
 #
 # Transport Modes:
 #   make test-http          # Run tests forcing HTTP transport
@@ -11,20 +16,21 @@
 #   make test-all-transports # Run test suite for each transport
 #
 # The Makefile assumes the following workspace layout:
-#   ../soft-fido2        - Virtual FIDO2 authenticator
 #   ../wallet-frontend   - React frontend
 #   ../go-wallet-backend - Go backend
+#   ../soft-fido2        - Virtual FIDO2 authenticator (optional, for browser tests)
 #
 # Override paths if needed:
-#   make up SOFT_FIDO2_PATH=/custom/path FRONTEND_PATH=/custom/frontend
+#   make up FRONTEND_PATH=/custom/frontend BACKEND_PATH=/custom/backend
 
 .PHONY: help install \
         up down logs status \
-        tests test-api test-webauthn test-credential test-tenant test-registry \
+        tests test test-api test-webauthn test-credential test-tenant test-registry test-go-trust \
         test-http test-ws test-all-transports check-ws-available \
         tests-ci test-api-ci test-webauthn-ci \
-        start-soft-fido2 stop-soft-fido2 \
+        start-soft-fido2 stop-soft-fido2 up-soft-fido2 down-soft-fido2 test-soft-fido2 \
         up-vc down-vc test-vc test-all-services \
+        up-go-trust down-go-trust \
         clean clean-all
 
 # =============================================================================
@@ -90,16 +96,20 @@ NC := \033[0m
 help: ## Show this help
 	@echo "Wallet E2E Tests"
 	@echo ""
-	@echo "$(GREEN)Primary Workflow:$(NC)"
-	@echo "  make up       # Start environment (soft-fido2 + Docker services)"
-	@echo "  make tests    # Run all tests (API + WebAuthn)"
-	@echo "  make down     # Stop everything"
+	@echo "$(GREEN)Primary Workflow (CDP - headless, CI-compatible):$(NC)"
+	@echo "  make up       # Start Docker services only"
+	@echo "  make test     # Run all tests with CDP virtual authenticator"
+	@echo "  make down     # Stop Docker services"
+	@echo ""
+	@echo "$(GREEN)Soft-FIDO2 Workflow (browser-based, requires display):$(NC)"
+	@echo "  make up-soft-fido2    # Start soft-fido2 + Docker services"
+	@echo "  make test-soft-fido2  # Run full browser tests with soft-fido2"
+	@echo "  make down-soft-fido2  # Stop everything including soft-fido2"
 	@echo ""
 	@echo "$(GREEN)VC Services (Production-grade issuer/verifier):$(NC)"
 	@echo "  make up-vc            # Start with VC services (issuer/verifier/mockas)"
 	@echo "  make test-vc          # Run tests using VC services"
 	@echo "  make down-vc          # Stop VC services"
-	@echo "  make test-all-services # Run tests with mock then VC services"
 	@echo ""
 	@echo "$(GREEN)Transport Mode Testing:$(NC)"
 	@echo "  make test-http           # Force HTTP transport"
@@ -107,23 +117,23 @@ help: ## Show this help
 	@echo "  make test-all-transports # Run tests for each available transport"
 	@echo ""
 	@echo "$(GREEN)Focused Test Targets:$(NC)"
-	@echo "  make test-api       # API tests only (headless)"
-	@echo "  make test-webauthn  # WebAuthn UI tests (headed)"
-	@echo "  make test-credential # Credential flow tests"
-	@echo "  make test-tenant    # Tenant selector tests"
-	@echo "  make test-registry  # VCTM registry tests"
-	@echo "  make test-trust     # Trust integration tests (go-trust)"
+	@echo "  make test-api        # API tests only (headless)"
+	@echo "  make test-credential # Credential flow tests (CDP)"
+	@echo "  make test-tenant     # Tenant selector tests (CDP)"
+	@echo "  make test-registry   # VCTM registry tests"
+	@echo "  make test-trust      # Trust integration tests (CDP)"
+	@echo "  make test-go-trust   # Go-Trust PDP tests (whitelist, allow, deny)"
 	@echo ""
-	@echo "$(GREEN)CI Targets (headless):$(NC)"
-	@echo "  make tests-ci           # All CI tests (API + CDP WebAuthn)"
-	@echo "  make test-webauthn-cdp-ci # CDP WebAuthn tests (headless, no Xvfb)"
-	@echo "  make ci-full            # CI with soft-fido2 tests (needs Xvfb)"
+	@echo "$(GREEN)Go-Trust Services:$(NC)"
+	@echo "  make up-go-trust     # Start with go-trust PDP services"
+	@echo "  make test-go-trust   # Run go-trust API tests"
+	@echo "  make down-go-trust   # Stop go-trust environment"
 	@echo ""
 	@echo "$(GREEN)Configuration:$(NC)"
 	@echo "  TRANSPORT_MODE  = $(TRANSPORT_MODE) (auto|http|websocket)"
-	@echo "  SOFT_FIDO2_PATH = $(SOFT_FIDO2_PATH)"
 	@echo "  FRONTEND_PATH   = $(FRONTEND_PATH)"
 	@echo "  BACKEND_PATH    = $(BACKEND_PATH)"
+	@echo "  SOFT_FIDO2_PATH = $(SOFT_FIDO2_PATH) (for browser tests)"
 	@echo ""
 	@echo "$(GREEN)Service URLs:$(NC)"
 	@echo "  FRONTEND_URL     = $(FRONTEND_URL)"
@@ -164,8 +174,8 @@ stop-soft-fido2: ## Stop soft-fido2 virtual authenticator
 	SOFT_FIDO2_LOG=$(SOFT_FIDO2_LOG) \
 	./scripts/stop-soft-fido2.sh
 
-up: start-soft-fido2 ## Start test environment (soft-fido2 + Docker services)
-	@echo "$(GREEN)Starting test environment...$(NC)"
+up: ## Start Docker services for CDP tests (headless, no soft-fido2 needed)
+	@echo "$(GREEN)Starting test environment (Docker services only)...$(NC)"
 	@# Copy Dockerfile to frontend context
 	@cp -f dockerfiles/frontend.Dockerfile $(FRONTEND_PATH)/Dockerfile.e2e 2>/dev/null || true
 	@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) \
@@ -195,6 +205,12 @@ up: start-soft-fido2 ## Start test environment (soft-fido2 + Docker services)
 	@curl -sf $(VCTM_REGISTRY_URL)/status >/dev/null || (echo "$(RED)VCTM Registry not ready$(NC)"; exit 1)
 	@# Register mock issuer and verifier
 	@$(MAKE) -s register-mocks
+	@echo ""
+	@echo "$(GREEN)Ready! Run 'make test' to execute CDP tests.$(NC)"
+
+up-soft-fido2: start-soft-fido2 up ## Start soft-fido2 + Docker services (for browser tests)
+	@echo ""
+	@echo "$(GREEN)Ready! Run 'make test-soft-fido2' to execute browser tests.$(NC)"
 
 register-mocks: ## Register mock issuer and verifier with backend
 	@echo "$(GREEN)Registering mock services...$(NC)"
@@ -339,6 +355,71 @@ down-vc: stop-soft-fido2 ## Stop VC services environment
 	-@docker compose -f $(TEST_COMPOSE_FILE) down -v 2>/dev/null || true
 	@echo "$(GREEN)Environment stopped$(NC)"
 
+# =============================================================================
+# Go-Trust Services (AuthZEN PDP integration)
+# =============================================================================
+# Uses real go-trust PDP instead of mock, with different registry configurations:
+#   - go-trust-allow (port 9091): AlwaysTrusted registry
+#   - go-trust-deny (port 9092): NeverTrusted registry
+#   - go-trust-whitelist (port 9093): Whitelist registry
+
+GO_TRUST_PATH ?= ../go-trust
+GO_TRUST_COMPOSE := docker-compose.go-trust.yml
+GO_TRUST_ALLOW_URL ?= http://localhost:9094
+GO_TRUST_DENY_URL ?= http://localhost:9092
+GO_TRUST_WHITELIST_URL ?= http://localhost:9093
+
+up-go-trust: ## Start with go-trust PDP services
+	@echo "$(GREEN)Starting test environment with go-trust...$(NC)"
+	@# Copy Dockerfile to frontend context
+	@cp -f dockerfiles/frontend.Dockerfile $(FRONTEND_PATH)/Dockerfile.e2e 2>/dev/null || true
+	@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) GO_TRUST_PATH=$(GO_TRUST_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) -f $(GO_TRUST_COMPOSE) build --no-cache
+	@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) GO_TRUST_PATH=$(GO_TRUST_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) -f $(GO_TRUST_COMPOSE) up -d
+	@echo "$(GREEN)Waiting for services to be healthy...$(NC)"
+	@for i in $$(seq 1 120); do \
+		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
+		   curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(ENGINE_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(GO_TRUST_ALLOW_URL)/healthz >/dev/null 2>&1 && \
+		   curl -sf $(GO_TRUST_DENY_URL)/healthz >/dev/null 2>&1 && \
+		   curl -sf $(GO_TRUST_WHITELIST_URL)/healthz >/dev/null 2>&1; then \
+			echo "$(GREEN)All services healthy!$(NC)"; break; \
+		fi; \
+		echo "  Waiting... ($$i/120)"; sleep 2; \
+	done
+	@# Final health checks
+	@curl -sf $(FRONTEND_URL) >/dev/null || (echo "$(RED)Frontend not ready$(NC)"; exit 1)
+	@curl -sf $(BACKEND_URL)/status >/dev/null || (echo "$(RED)Backend not ready$(NC)"; exit 1)
+	@curl -sf $(GO_TRUST_ALLOW_URL)/healthz >/dev/null || (echo "$(RED)go-trust-allow not ready$(NC)"; exit 1)
+	@curl -sf $(GO_TRUST_DENY_URL)/healthz >/dev/null || (echo "$(RED)go-trust-deny not ready$(NC)"; exit 1)
+	@curl -sf $(GO_TRUST_WHITELIST_URL)/healthz >/dev/null || (echo "$(RED)go-trust-whitelist not ready$(NC)"; exit 1)
+	@# Register mock issuer and verifier
+	@$(MAKE) -s register-mocks
+	@echo ""
+	@echo "$(GREEN)Go-Trust environment ready$(NC)"
+	@echo "  Allow:     $(GO_TRUST_ALLOW_URL)"
+	@echo "  Deny:      $(GO_TRUST_DENY_URL)"
+	@echo "  Whitelist: $(GO_TRUST_WHITELIST_URL)"
+
+down-go-trust: ## Stop go-trust environment
+	@echo "$(YELLOW)Stopping go-trust environment...$(NC)"
+	-@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) GO_TRUST_PATH=$(GO_TRUST_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) -f $(GO_TRUST_COMPOSE) down -v 2>/dev/null || true
+	@echo "$(GREEN)Environment stopped$(NC)"
+
+test-go-trust: ## Run go-trust API tests
+	@echo "$(GREEN)Running go-trust API tests...$(NC)"
+	@curl -sf $(GO_TRUST_ALLOW_URL)/healthz >/dev/null || \
+		(echo "$(RED)go-trust not running. Run 'make up-go-trust' first.$(NC)"; exit 1)
+	$(TEST_ENV) GO_TRUST_ALLOW_URL=$(GO_TRUST_ALLOW_URL) \
+		GO_TRUST_DENY_URL=$(GO_TRUST_DENY_URL) \
+		GO_TRUST_WHITELIST_URL=$(GO_TRUST_WHITELIST_URL) \
+		npx playwright test specs/api/go-trust.spec.ts --reporter=list
+
 test-vc: ## Run tests with VC services (assumes up-vc was run)
 	@echo "$(GREEN)Running tests with VC services...$(NC)"
 	@curl -sf $(VC_ISSUER_URL)/health >/dev/null || \
@@ -396,11 +477,13 @@ check-backend-type: ## Display which backend type is running
 		echo "$(YELLOW)Type: wallet-backend-server (HTTP only)$(NC)"; \
 	fi
 
-down: stop-soft-fido2 ## Stop test environment
-	@echo "$(YELLOW)Stopping test environment...$(NC)"
+down: ## Stop Docker services
+	@echo "$(YELLOW)Stopping Docker services...$(NC)"
 	-@docker compose -f $(TEST_COMPOSE_FILE) down -v 2>/dev/null || true
 	-@docker compose -f $(TEST_COMPOSE_FILE) -f $(TS_BACKEND_COMPOSE) down -v 2>/dev/null || true
 	@echo "$(GREEN)Environment stopped$(NC)"
+
+down-soft-fido2: stop-soft-fido2 down ## Stop soft-fido2 + Docker services
 
 logs: ## View service logs
 	docker compose -f $(TEST_COMPOSE_FILE) logs -f
@@ -438,8 +521,30 @@ status: ## Check service status
 # Test Execution
 # =============================================================================
 
-# Main test target - runs all tests
-tests: test-api test-webauthn ## Run all tests (API + WebAuthn)
+# Main test target - runs CDP tests (headless, CI-compatible)
+test: test-api test-cdp ## Run all tests with CDP (API + WebAuthn)
+
+tests: test ## Alias for 'test'
+
+# CDP WebAuthn tests - fully headless, no display required
+test-cdp: ## Run WebAuthn tests with CDP virtual authenticator (headless)
+	@echo "$(GREEN)Running WebAuthn tests with CDP + PRF mock (headless)...$(NC)"
+	@curl -sf $(FRONTEND_URL) >/dev/null || \
+		(echo "$(RED)Frontend not running. Run 'make up' first.$(NC)"; exit 1)
+	$(TEST_ENV) npx playwright test --config=playwright.webauthn-ci.config.ts --reporter=list
+
+# Soft-FIDO2 tests - requires display (Xvfb or real display)
+test-soft-fido2: test-api test-webauthn-browser ## Run tests with soft-fido2 authenticator
+
+# WebAuthn UI tests (headed, requires display and soft-fido2)
+test-webauthn-browser: ## Run WebAuthn UI tests with soft-fido2 (requires display)
+	@echo "$(GREEN)Running WebAuthn UI tests with soft-fido2...$(NC)"
+	@if [ ! -f "$(SOFT_FIDO2_PID)" ] || ! kill -0 $$(cat "$(SOFT_FIDO2_PID)") 2>/dev/null; then \
+		echo "$(RED)soft-fido2 not running. Run 'make up-soft-fido2' first.$(NC)"; exit 1; \
+	fi
+	@curl -sf $(FRONTEND_URL) >/dev/null || \
+		(echo "$(RED)Frontend not running. Run 'make up-soft-fido2' first.$(NC)"; exit 1)
+	$(TEST_ENV) npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
 
 # API tests (headless, fast)
 test-api: ## Run API tests (headless)
@@ -448,23 +553,16 @@ test-api: ## Run API tests (headless)
 		(echo "$(RED)Backend not running. Run 'make up' first.$(NC)"; exit 1)
 	$(TEST_ENV) npx playwright test specs/api/ --reporter=list
 
-# WebAuthn UI tests (headed, requires display)
-test-webauthn: ## Run WebAuthn UI tests (headed, requires display)
-	@echo "$(GREEN)Running WebAuthn UI tests...$(NC)"
-	@curl -sf $(FRONTEND_URL) >/dev/null || \
-		(echo "$(RED)Frontend not running. Run 'make up' first.$(NC)"; exit 1)
-	$(TEST_ENV) npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
+# Individual test targets for focused testing (using CDP by default)
+test-credential: ## Run credential flow tests with CDP (issuance & verification)
+	@echo "$(GREEN)Running credential flow tests (CDP)...$(NC)"
+	$(TEST_ENV) npx playwright test --config=playwright.webauthn-ci.config.ts \
+		--grep="Credential" --reporter=list
 
-# Individual test targets for focused testing
-test-credential: ## Run credential flow tests (issuance & verification)
-	@echo "$(GREEN)Running credential flow tests...$(NC)"
-	$(TEST_ENV) npx playwright test --config=playwright.real-webauthn.config.ts \
-		specs/real-webauthn/credential-flow.spec.ts --reporter=list
-
-test-tenant: ## Run tenant selector tests
-	@echo "$(GREEN)Running tenant selector tests...$(NC)"
-	$(TEST_ENV) npx playwright test --config=playwright.real-webauthn.config.ts \
-		specs/real-webauthn/tenant-selector.spec.ts --reporter=list
+test-tenant: ## Run tenant selector tests with CDP
+	@echo "$(GREEN)Running tenant selector tests (CDP)...$(NC)"
+	$(TEST_ENV) npx playwright test --config=playwright.webauthn-ci.config.ts \
+		--grep="TenantSelector" --reporter=list
 
 test-registry: ## Run VCTM registry tests
 	@echo "$(GREEN)Running VCTM registry tests...$(NC)"
@@ -472,12 +570,12 @@ test-registry: ## Run VCTM registry tests
 		(echo "$(RED)Registry not running. Run 'make up' first.$(NC)"; exit 1)
 	$(TEST_ENV) npx playwright test specs/api/registry.spec.ts --reporter=list
 
-test-trust: ## Run trust integration tests (go-trust compatibility)
-	@echo "$(GREEN)Running trust integration tests...$(NC)"
+test-trust: ## Run trust integration tests with CDP
+	@echo "$(GREEN)Running trust integration tests (CDP)...$(NC)"
 	@curl -sf $(MOCK_PDP_URL)/health >/dev/null || \
 		(echo "$(RED)Mock PDP not running. Run 'make up' first.$(NC)"; exit 1)
-	$(TEST_ENV) npx playwright test --config=playwright.real-webauthn.config.ts \
-		specs/real-webauthn/trust-integration.spec.ts --reporter=list
+	$(TEST_ENV) npx playwright test --config=playwright.webauthn-ci.config.ts \
+		--grep="Trust Integration" --reporter=list
 
 # =============================================================================
 # Transport Mode Testing
@@ -556,16 +654,11 @@ test-all-transports: ## Run test suite for each available transport
 # CI Targets
 # =============================================================================
 
-tests-ci: test-api-ci test-webauthn-cdp-ci ## Run all CI tests (API + CDP WebAuthn)
+tests-ci: test ## Run all CI tests (now same as 'test' - CDP by default)
 
-test-api-ci: ## Run API tests in CI (headless)
-	@echo "$(GREEN)Running API tests (CI)...$(NC)"
-	$(TEST_ENV) npx playwright test specs/api/ --reporter=list
+test-api-ci: test-api ## Run API tests in CI (alias)
 
-# CDP-based WebAuthn tests - fully headless, no display required
-test-webauthn-cdp-ci: ## Run WebAuthn tests with CDP (headless, CI-compatible)
-	@echo "$(GREEN)Running WebAuthn tests with CDP + PRF mock (headless)...$(NC)"
-	$(TEST_ENV) npx playwright test --config=playwright.webauthn-ci.config.ts --reporter=list
+test-webauthn-cdp-ci: test-cdp ## Run WebAuthn tests with CDP (alias)
 
 # Legacy Xvfb-based soft-fido2 tests (requires display server)
 test-webauthn-xvfb: ## Run WebAuthn tests with Xvfb (soft-fido2, requires display)
@@ -575,11 +668,11 @@ test-webauthn-xvfb: ## Run WebAuthn tests with Xvfb (soft-fido2, requires displa
 	xvfb-run -a --server-args="-screen 0 1920x1080x24" \
 		env $(TEST_ENV) npx playwright test --config=playwright.real-webauthn.config.ts --reporter=list
 
-# Full CI cycle
-ci: up tests-ci down ## Full CI: start → test → cleanup
+# Full CI cycle (CDP based - no display required)
+ci: up test down ## Full CI: start → test → cleanup
 
 # Comprehensive CI (includes soft-fido2 tests via Xvfb)
-ci-full: up test-api-ci test-webauthn-cdp-ci test-webauthn-xvfb down ## Full CI with soft-fido2 tests
+ci-full: up-soft-fido2 test test-webauthn-xvfb down-soft-fido2 ## Full CI with soft-fido2 tests
 
 # =============================================================================
 # Debug Targets
@@ -608,10 +701,10 @@ clean-all: clean ## Remove all generated files
 # Legacy Aliases (for backward compatibility)
 # =============================================================================
 
-run: tests ## Alias for 'tests'
-test: tests ## Alias for 'tests'
-test-real-webauthn: test-webauthn ## Alias for 'test-webauthn'
-test-webauthn-ci: test-webauthn-cdp-ci ## Alias for 'test-webauthn-cdp-ci' (new CI-compatible)
+run: test ## Alias for 'test'
+test-webauthn: test-cdp ## Alias for 'test-cdp' (CDP is now default)
+test-real-webauthn: test-webauthn-browser ## Alias for 'test-webauthn-browser' (soft-fido2)
+test-webauthn-ci: test-cdp ## Alias for 'test-cdp' (CDP is now default)
 test-real-webauthn-ci: test-webauthn-xvfb ## Alias for 'test-webauthn-xvfb' (soft-fido2 with Xvfb)
 test-credential-flow: test-credential ## Alias for 'test-credential'
 ci-docker: ci ## Alias for 'ci'

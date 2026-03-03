@@ -1,16 +1,11 @@
-# Whitelist for go-trust E2E tests
-# Each line is an exact issuer identifier that should be trusted
-
-# Mock issuer used in E2E tests (accessible as localhost from host network mode)
-http://localhost:9000
-
-# Mock issuer (as seen from within docker network)
-http://mock-issuer:9000
-
-# Mock verifier used in E2E tests
-http://localhost:9001
-http://mock-verifier:9001
-
-# Allow wildcard for any issuer matching a pattern
-# Example: *.example.com would match any subdomain
-# For now, we keep explicit entries
+{
+  "issuers": [
+    "http://localhost:9000",
+    "http://mock-issuer:9000"
+  ],
+  "verifiers": [
+    "http://localhost:9001",
+    "http://mock-verifier:9001"
+  ],
+  "trusted_subjects": []
+}

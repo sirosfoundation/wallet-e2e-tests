@@ -4,13 +4,13 @@
 #
 # Usage:
 #   docker-compose -f docker-compose.test.yml -f docker-compose.go-trust.yml up -d
-#   make test-trust-integration
+#   make test-go-trust
 #
-# This replaces mock-trust-pdp with the actual go-trust implementation.
+# This adds go-trust services for direct API testing while keeping mock-trust-pdp
+# for wallet-backend compatibility.
 
 services:
   # Go Trust PDP - AlwaysTrusted registry for testing
-  # Replace mock-trust-pdp with actual go-trust
   go-trust-allow:
     build:
       context: ${GO_TRUST_PATH:-../go-trust}
@@ -18,10 +18,10 @@ services:
     image: go-trust-e2e-test:local
     container_name: go-trust-allow-e2e-test
     ports:
-      - "9091:6001"  # Map mock-trust-pdp port to go-trust
-    command: ["--registry", "static:always-trusted", "--host", "0.0.0.0", "--port", "6001"]
+      - "9094:6001"  # Use 9094 to avoid conflict with mock-trust-pdp on 9091
+    command: ["--registry", "always-trusted", "--host", "0.0.0.0", "--port", "6001"]
     environment:
-      - GO_TRUST_EXTERNAL_URL=http://localhost:9091
+      - GO_TRUST_EXTERNAL_URL=http://localhost:9094
     healthcheck:
       test: ["CMD", "wget", "-q", "--spider", "http://localhost:6001/healthz"]
       interval: 3s
@@ -39,7 +39,7 @@ services:
     container_name: go-trust-deny-e2e-test
     ports:
       - "9092:6001"
-    command: ["--registry", "static:never-trusted", "--host", "0.0.0.0", "--port", "6001"]
+    command: ["--registry", "never-trusted", "--host", "0.0.0.0", "--port", "6001"]
     environment:
       - GO_TRUST_EXTERNAL_URL=http://localhost:9092
     healthcheck:
@@ -71,11 +71,6 @@ services:
       retries: 10
     networks:
       - e2e-test-network
-
-  # Override wallet-backend to use go-trust-allow by default
-  wallet-backend:
-    environment:
-      - WALLET_TRUST_PDP_URL=http://localhost:9091
 
 networks:
   e2e-test-network:
