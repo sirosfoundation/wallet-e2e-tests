@@ -1,0 +1,198 @@
+# E2E Tests triggered from wallet-frontend commits
+#
+# This workflow runs the CDP-based E2E tests against a specific
+# wallet-frontend commit. It can be triggered via:
+#   - workflow_dispatch: Manual trigger with frontend_ref input
+#   - repository_dispatch: Triggered from wallet-frontend repo
+#
+# The workflow uses:
+#   - wallet-frontend: The specific commit being tested
+#   - go-wallet-backend: Latest from main branch
+#   - mock services: Built locally from this repo
+
+name: Frontend CI (CDP)
+
+on:
+  workflow_dispatch:
+    inputs:
+      frontend_ref:
+        description: 'wallet-frontend git ref (branch, tag, or SHA)'
+        required: true
+        default: 'master'
+        type: string
+      frontend_repo:
+        description: 'wallet-frontend repository'
+        required: false
+        default: 'wwWallet/wallet-frontend'
+        type: string
+      backend_ref:
+        description: 'go-wallet-backend git ref (branch, tag, or SHA)'
+        required: false
+        default: 'main'
+        type: string
+      debug_enabled:
+        description: 'Run with tmate debug session on failure'
+        required: false
+        default: 'false'
+        type: boolean
+
+  repository_dispatch:
+    types: [frontend-ci]
+
+env:
+  FRONTEND_URL: http://localhost:3000
+  BACKEND_URL: http://localhost:8080
+  ENGINE_URL: http://localhost:8082
+  ADMIN_URL: http://localhost:8081
+  ADMIN_TOKEN: e2e-test-admin-token-for-testing-purposes-only
+  MOCK_ISSUER_URL: http://localhost:9000
+  MOCK_VERIFIER_URL: http://localhost:9001
+  MOCK_PDP_URL: http://localhost:9091
+  VCTM_REGISTRY_URL: http://localhost:8097
+
+jobs:
+  e2e-tests:
+    name: CDP E2E Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Determine refs
+        id: refs
+        run: |
+          # Handle repository_dispatch from wallet-frontend
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            FRONTEND_REF="${{ github.event.client_payload.frontend_ref }}"
+            FRONTEND_REPO="${{ github.event.client_payload.frontend_repo }}"
+            BACKEND_REF="${{ github.event.client_payload.backend_ref || 'main' }}"
+            DEBUG="${{ github.event.client_payload.debug || 'false' }}"
+          else
+            # workflow_dispatch
+            FRONTEND_REF="${{ github.event.inputs.frontend_ref }}"
+            FRONTEND_REPO="${{ github.event.inputs.frontend_repo }}"
+            BACKEND_REF="${{ github.event.inputs.backend_ref }}"
+            DEBUG="${{ github.event.inputs.debug_enabled }}"
+          fi
+          
+          # Defaults
+          FRONTEND_REPO="${FRONTEND_REPO:-wwWallet/wallet-frontend}"
+          FRONTEND_REF="${FRONTEND_REF:-master}"
+          BACKEND_REF="${BACKEND_REF:-main}"
+          
+          echo "frontend_repo=$FRONTEND_REPO" >> $GITHUB_OUTPUT
+          echo "frontend_ref=$FRONTEND_REF" >> $GITHUB_OUTPUT
+          echo "backend_ref=$BACKEND_REF" >> $GITHUB_OUTPUT
+          echo "debug=$DEBUG" >> $GITHUB_OUTPUT
+          
+          echo "### Test Configuration" >> $GITHUB_STEP_SUMMARY
+          echo "- **Frontend**: $FRONTEND_REPO@$FRONTEND_REF" >> $GITHUB_STEP_SUMMARY
+          echo "- **Backend**: sirosfoundation/go-wallet-backend@$BACKEND_REF" >> $GITHUB_STEP_SUMMARY
+
+      - name: Checkout e2e tests
+        uses: actions/checkout@v4
+
+      - name: Checkout wallet-frontend
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ steps.refs.outputs.frontend_repo }}
+          path: wallet-frontend
+          ref: ${{ steps.refs.outputs.frontend_ref }}
+
+      - name: Checkout go-wallet-backend
+        uses: actions/checkout@v4
+        with:
+          repository: sirosfoundation/go-wallet-backend
+          path: go-wallet-backend
+          ref: ${{ steps.refs.outputs.backend_ref }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install chrome --with-deps
+
+      - name: Copy frontend Dockerfile
+        run: cp -f dockerfiles/frontend.Dockerfile wallet-frontend/Dockerfile.e2e
+
+      - name: Start services (make up)
+        run: |
+          export FRONTEND_PATH=./wallet-frontend
+          export BACKEND_PATH=./go-wallet-backend
+          
+          # Build and start services
+          docker compose -f docker-compose.test.yml build --no-cache
+          docker compose -f docker-compose.test.yml up -d
+          
+          # Wait for services to be healthy
+          echo "Waiting for services to start..."
+          for i in $(seq 1 60); do
+            if curl -sf $FRONTEND_URL >/dev/null 2>&1 && \
+               curl -sf $BACKEND_URL/status >/dev/null 2>&1 && \
+               curl -sf $ENGINE_URL/status >/dev/null 2>&1 && \
+               curl -sf $MOCK_ISSUER_URL/health >/dev/null 2>&1 && \
+               curl -sf $MOCK_VERIFIER_URL/health >/dev/null 2>&1 && \
+               curl -sf $MOCK_PDP_URL/health >/dev/null 2>&1 && \
+               curl -sf $VCTM_REGISTRY_URL/status >/dev/null 2>&1; then
+              echo "All services healthy!"
+              break
+            fi
+            echo "  Waiting... ($i/60)"
+            sleep 5
+          done
+          
+          # Final health checks
+          curl -sf $FRONTEND_URL || (echo "Frontend not ready"; exit 1)
+          curl -sf $BACKEND_URL/status || (echo "Backend not ready"; exit 1)
+          curl -sf $MOCK_PDP_URL/health || (echo "PDP not ready"; exit 1)
+
+      - name: Register mock services
+        run: |
+          # Register mock issuer
+          curl -sf -X POST $ADMIN_URL/admin/tenants/default/issuers \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"credential_issuer_identifier": "'$MOCK_ISSUER_URL'", "client_id": "wallet-e2e-client", "visible": true}' || true
+          
+          # Register mock verifier
+          curl -sf -X POST $ADMIN_URL/admin/tenants/default/verifiers \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            -d '{"name": "E2E Mock Verifier", "url": "'$MOCK_VERIFIER_URL'"}' || true
+
+      - name: Run CDP E2E tests (make test)
+        run: |
+          npx playwright test --config=playwright.webauthn-ci.config.ts --reporter=list
+
+      - name: Upload test results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-test-results-${{ github.run_id }}
+          path: |
+            playwright-report-ci/
+            test-results-ci/
+          retention-days: 14
+
+      - name: Stop services (make down)
+        if: always()
+        run: docker compose -f docker-compose.test.yml down -v
+
+      - name: Debug session
+        if: failure() && steps.refs.outputs.debug == 'true'
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 15
+
+      - name: Test Summary
+        if: always()
+        run: |
+          echo "### Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f playwright-report-ci/index.html ]; then
+            echo "Test report generated. Download artifacts to view." >> $GITHUB_STEP_SUMMARY
+          fi

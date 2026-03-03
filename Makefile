@@ -420,6 +420,60 @@ test-go-trust: ## Run go-trust API tests
 		GO_TRUST_WHITELIST_URL=$(GO_TRUST_WHITELIST_URL) \
 		npx playwright test specs/api/go-trust.spec.ts --reporter=list
 
+# -----------------------------------------------------------------------------
+# Go-Trust Whitelist Credential Flow Tests
+# -----------------------------------------------------------------------------
+# These tests use go-trust whitelist registry as the wallet-backend PDP.
+# The wallet-backend evaluates trust via go-trust for issuance/verification.
+
+GO_TRUST_WHITELIST_COMPOSE := docker-compose.go-trust-whitelist.yml
+
+up-go-trust-whitelist: ## Start environment with go-trust whitelist as PDP
+	@echo "$(GREEN)Starting environment with go-trust whitelist PDP...$(NC)"
+	@# Copy Dockerfile to frontend context
+	@cp -f dockerfiles/frontend.Dockerfile $(FRONTEND_PATH)/Dockerfile.e2e 2>/dev/null || true
+	@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) GO_TRUST_PATH=$(GO_TRUST_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) -f $(GO_TRUST_WHITELIST_COMPOSE) build --no-cache
+	@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) GO_TRUST_PATH=$(GO_TRUST_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) -f $(GO_TRUST_WHITELIST_COMPOSE) up -d
+	@echo "$(GREEN)Waiting for services to be healthy...$(NC)"
+	@for i in $$(seq 1 120); do \
+		if curl -sf $(FRONTEND_URL) >/dev/null 2>&1 && \
+		   curl -sf $(BACKEND_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(ENGINE_URL)/status >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_ISSUER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(MOCK_VERIFIER_URL)/health >/dev/null 2>&1 && \
+		   curl -sf $(GO_TRUST_WHITELIST_URL)/healthz >/dev/null 2>&1 && \
+		   curl -sf $(VCTM_REGISTRY_URL)/status >/dev/null 2>&1; then \
+			echo "$(GREEN)All services healthy!$(NC)"; break; \
+		fi; \
+		echo "  Waiting... ($$i/120)"; sleep 2; \
+	done
+	@# Final health checks
+	@curl -sf $(FRONTEND_URL) >/dev/null || (echo "$(RED)Frontend not ready$(NC)"; exit 1)
+	@curl -sf $(BACKEND_URL)/status >/dev/null || (echo "$(RED)Backend not ready$(NC)"; exit 1)
+	@curl -sf $(GO_TRUST_WHITELIST_URL)/healthz >/dev/null || (echo "$(RED)go-trust-whitelist not ready$(NC)"; exit 1)
+	@# Register mock issuer and verifier
+	@$(MAKE) -s register-mocks
+	@echo ""
+	@echo "$(GREEN)Go-Trust Whitelist environment ready$(NC)"
+	@echo "  Whitelist PDP:  $(GO_TRUST_WHITELIST_URL)"
+	@echo "  Mock Issuer:    $(MOCK_ISSUER_URL) (whitelisted)"
+	@echo "  Mock Verifier:  $(MOCK_VERIFIER_URL) (whitelisted)"
+
+down-go-trust-whitelist: ## Stop go-trust whitelist environment
+	@echo "$(YELLOW)Stopping go-trust whitelist environment...$(NC)"
+	-@FRONTEND_PATH=$(FRONTEND_PATH) BACKEND_PATH=$(BACKEND_PATH) GO_TRUST_PATH=$(GO_TRUST_PATH) \
+		docker compose -f $(TEST_COMPOSE_FILE) -f $(GO_TRUST_WHITELIST_COMPOSE) down -v 2>/dev/null || true
+	@echo "$(GREEN)Environment stopped$(NC)"
+
+test-credential-go-trust: ## Run credential flow tests with go-trust whitelist PDP (CDP mode)
+	@echo "$(GREEN)Running credential flow tests with go-trust whitelist PDP...$(NC)"
+	@curl -sf $(GO_TRUST_WHITELIST_URL)/healthz >/dev/null || \
+		(echo "$(RED)go-trust-whitelist not running. Run 'make up-go-trust-whitelist' first.$(NC)"; exit 1)
+	$(TEST_ENV) GO_TRUST_WHITELIST_URL=$(GO_TRUST_WHITELIST_URL) \
+		npx playwright test specs/api/go-trust-credential.spec.ts --reporter=list
+
 test-vc: ## Run tests with VC services (assumes up-vc was run)
 	@echo "$(GREEN)Running tests with VC services...$(NC)"
 	@curl -sf $(VC_ISSUER_URL)/health >/dev/null || \

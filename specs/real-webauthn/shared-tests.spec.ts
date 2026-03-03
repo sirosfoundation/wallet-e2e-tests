@@ -18,9 +18,40 @@ import {
   type WebAuthnAdapterInfo,
   type WebAuthnFixtures 
 } from '../../helpers/webauthn-adapter';
+
+// Import all shared test modules
 import {
   allSharedTests,
+  defineDefaultTenantFlowTests,
+  defineCustomTenantFlowTests,
 } from '../shared/user-flows.shared';
+import {
+  defineBackendCapabilitiesTests,
+  defineTenantApiTests,
+  defineServiceHealthTests,
+} from '../shared/backend-capabilities.shared';
+import {
+  defineTenantRoutingTests,
+  defineEndpointConstructionTests,
+  defineCrossTenantIsolationTests,
+  defineTenantUserHandleTests,
+} from '../shared/tenant-routing.shared';
+import {
+  defineTenantSelectorUnauthTests,
+  defineTenantSelectorAuthTests,
+  defineTenantSelectorEdgeCaseTests,
+} from '../shared/tenant-selector.shared';
+import {
+  definePdpModeControlTests,
+  defineTrustRegistrationTests,
+  defineAuthZenDiscoveryTests,
+  defineStaticRegistryCompatTests,
+} from '../shared/trust-integration.shared';
+import {
+  defineCredentialFlowHealthTests,
+  defineCredentialIssuanceTests,
+  defineCredentialIdStabilityTests,
+} from '../shared/credential-flow.shared';
 
 // =============================================================================
 // Soft-FIDO2 Test Fixture
@@ -53,9 +84,40 @@ const softFido2Test = test.extend<WebAuthnFixtures>({
 softFido2Test.describe('Soft-FIDO2 WebAuthn Tests', () => {
   softFido2Test.describe.configure({ mode: 'serial' });
 
-  // Run all shared test suites
+  // Core User Registration Tests
   allSharedTests.userRegistration(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
   allSharedTests.prfVerification(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
   allSharedTests.errorHandling(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
   allSharedTests.multiTenant(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+
+  // Full User Flow Tests
+  defineDefaultTenantFlowTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineCustomTenantFlowTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+
+  // Backend Capabilities (API-only tests)
+  defineBackendCapabilitiesTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineTenantApiTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineServiceHealthTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+
+  // Tenant URL Routing Tests
+  defineTenantRoutingTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineEndpointConstructionTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineCrossTenantIsolationTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineTenantUserHandleTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+
+  // TenantSelector UI Tests
+  defineTenantSelectorUnauthTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineTenantSelectorAuthTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineTenantSelectorEdgeCaseTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+
+  // Trust/PDP Integration Tests
+  definePdpModeControlTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineTrustRegistrationTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineAuthZenDiscoveryTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineStaticRegistryCompatTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+
+  // Credential Flow Tests
+  defineCredentialFlowHealthTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineCredentialIssuanceTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
+  defineCredentialIdStabilityTests(softFido2Test, () => SOFT_FIDO2_ADAPTER_INFO);
 });
