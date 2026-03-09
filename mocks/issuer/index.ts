@@ -30,6 +30,39 @@ const ISSUER_ID = process.env.ISSUER_ID || `http://localhost:${PORT}`;
 const INCLUDE_IACA = process.env.INCLUDE_IACA !== 'false';
 const DEFAULT_REDIRECT_URI = process.env.DEFAULT_REDIRECT_URI || 'http://localhost:3000/';
 
+// Generate signing keypair at startup (ES256 = P-256 curve)
+const { privateKey: signingPrivateKey, publicKey: signingPublicKey } = crypto.generateKeyPairSync('ec', {
+  namedCurve: 'P-256',
+});
+
+// Export public key as JWK for JWKS endpoint
+function getPublicKeyJWK(): Record<string, any> {
+  const jwk = signingPublicKey.export({ format: 'jwk' });
+  return {
+    ...jwk,
+    kid: 'issuer-signing-key-1',
+    use: 'sig',
+    alg: 'ES256',
+  };
+}
+
+// Sign a JWT with the issuer's private key
+function signJWT(header: Record<string, any>, payload: Record<string, any>): string {
+  const headerWithJWK = {
+    ...header,
+    jwk: getPublicKeyJWK(),
+  };
+  
+  const headerBase64 = Buffer.from(JSON.stringify(headerWithJWK)).toString('base64url');
+  const payloadBase64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signingInput = `${headerBase64}.${payloadBase64}`;
+  
+  const signature = crypto.sign('SHA256', Buffer.from(signingInput), signingPrivateKey);
+  const signatureBase64 = signature.toString('base64url');
+  
+  return `${headerBase64}.${payloadBase64}.${signatureBase64}`;
+}
+
 // In-memory stores for OAuth state
 const authorizationCodes = new Map<string, {
   clientId: string;
@@ -214,7 +247,7 @@ function parseUrlEncoded(body: string): Record<string, string> {
 
 // Generate a mock SD-JWT credential
 function generateMockSDJWTCredential(cNonce: string): string {
-  // This is a mock credential - in production this would be a properly signed SD-JWT
+  // Create a real signed credential
   const header = { alg: 'ES256', typ: 'vc+sd-jwt' };
   const payload = {
     iss: ISSUER_ID,
@@ -229,12 +262,8 @@ function generateMockSDJWTCredential(cNonce: string): string {
     birthdate: '1990-01-01',
   };
   
-  // Create a mock JWT (not cryptographically valid, but structurally correct)
-  const base64Header = Buffer.from(JSON.stringify(header)).toString('base64url');
-  const base64Payload = Buffer.from(JSON.stringify(payload)).toString('base64url');
-  const mockSignature = 'mockSignature123456789';
-  
-  return `${base64Header}.${base64Payload}.${mockSignature}`;
+  // Sign the JWT with the issuer's private key (includes JWK in header)
+  return signJWT(header, payload);
 }
 
 // Verify PKCE code challenge
@@ -271,6 +300,16 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(credentialIssuerMetadata, null, 2));
       break;
+
+    case '/.well-known/jwks.json': {
+      // Return the issuer's public signing key as JWKS
+      const jwks = {
+        keys: [getPublicKeyJWK()],
+      };
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(jwks, null, 2));
+      break;
+    }
 
     case '/.well-known/oauth-authorization-server':
       res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -591,6 +630,7 @@ server.listen(PORT, () => {
   console.log(`\nEndpoints:`);
   console.log(`  /.well-known/openid-credential-issuer - Credential issuer metadata`);
   console.log(`  /.well-known/oauth-authorization-server - Authorization server metadata`);
+  console.log(`  /.well-known/jwks.json - JWKS (signing public keys)`);
   console.log(`  /offer - Generate credential offer (GET ?credential=identity_credential)`);
   console.log(`  /credential-offer - Fetch credential offer by URI`);
   console.log(`  /par - Pushed Authorization Request (POST)`);

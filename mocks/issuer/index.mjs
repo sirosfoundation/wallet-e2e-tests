@@ -161,20 +161,42 @@ const iacaCertificates = {
   iacas: [{ certificate: TEST_IACA_CERTIFICATE }],
 };
 
-// Mock issuer key (for signing - just needs to look valid)
-const MOCK_KID = 'test-key-1';
+// Generate a real EC P-256 keypair for signing and JWKS
+const MOCK_KID = 'issuer-signing-key-1';
+const { privateKey: signingPrivateKey, publicKey: signingPublicKey } = crypto.generateKeyPairSync('ec', {
+  namedCurve: 'P-256',
+});
+
+// Export public key as JWK for JWKS endpoint
+function getPublicKeyJWK() {
+  const jwk = signingPublicKey.export({ format: 'jwk' });
+  return {
+    ...jwk,
+    kid: MOCK_KID,
+    use: 'sig',
+    alg: 'ES256',
+  };
+}
+
+// Sign a JWT with the issuer's private key (real ES256 signature)
+function signJWT(header, payload) {
+  const headerWithJWK = {
+    ...header,
+    jwk: getPublicKeyJWK(),
+  };
+
+  const headerBase64 = Buffer.from(JSON.stringify(headerWithJWK)).toString('base64url');
+  const payloadBase64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signingInput = `${headerBase64}.${payloadBase64}`;
+
+  const signature = crypto.sign('SHA256', Buffer.from(signingInput), signingPrivateKey);
+  const signatureBase64 = signature.toString('base64url');
+
+  return `${headerBase64}.${payloadBase64}.${signatureBase64}`;
+}
+
 const mockJwks = {
-  keys: [
-    {
-      kty: 'EC',
-      crv: 'P-256',
-      kid: MOCK_KID,
-      x: base64url(crypto.randomBytes(32)),
-      y: base64url(crypto.randomBytes(32)),
-      use: 'sig',
-      alg: 'ES256',
-    },
-  ],
+  keys: [getPublicKeyJWK()],
 };
 
 // Create a mock SD-JWT credential (simplified - real one would need proper signing)
@@ -216,13 +238,14 @@ function createMockSDJWT(claims, holderBinding) {
     ...(holderBinding?.jwk ? { cnf: { jwk: holderBinding.jwk } } : {}),
   };
 
-  // Create mock JWT (header.payload.signature format)
-  // In production this would be properly signed, but for testing we use a mock signature
+  // Create real signed JWT (header.payload.signature format)
   const headerB64 = base64url(header);
   const payloadB64 = base64url(payload);
-  const mockSignature = base64url(crypto.randomBytes(64)); // Mock signature
+  const signingInput = `${headerB64}.${payloadB64}`;
+  const signature = crypto.sign('SHA256', Buffer.from(signingInput), signingPrivateKey);
+  const signatureB64 = signature.toString('base64url');
   
-  const jwt = `${headerB64}.${payloadB64}.${mockSignature}`;
+  const jwt = `${headerB64}.${payloadB64}.${signatureB64}`;
   
   // SD-JWT format: jwt~disclosure1~disclosure2~...
   return `${jwt}~${disclosures.join('~')}~`;

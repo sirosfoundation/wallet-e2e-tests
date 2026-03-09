@@ -24,6 +24,40 @@ const PORT = parseInt(process.env.PORT || '9001', 10);
 const VERIFIER_ID = process.env.VERIFIER_ID || `http://localhost:${PORT}`;
 const WALLET_URL = process.env.WALLET_URL || 'http://localhost:3000';
 
+// Generate signing keypair at startup (ES256 = P-256 curve)
+const { privateKey: signingPrivateKey, publicKey: signingPublicKey } = crypto.generateKeyPairSync('ec', {
+  namedCurve: 'P-256',
+});
+
+// Export public key as JWK for JWKS endpoint
+function getPublicKeyJWK(): Record<string, any> {
+  const jwk = signingPublicKey.export({ format: 'jwk' });
+  return {
+    ...jwk,
+    kid: 'verifier-signing-key-1',
+    use: 'sig',
+    alg: 'ES256',
+  };
+}
+
+// Sign a request object JWT with the verifier's private key
+function signRequestObject(payload: Record<string, any>): string {
+  const header = {
+    alg: 'ES256',
+    typ: 'oauth-authz-req+jwt',
+    kid: 'verifier-signing-key-1',
+  };
+  
+  const headerBase64 = Buffer.from(JSON.stringify(header)).toString('base64url');
+  const payloadBase64 = Buffer.from(JSON.stringify(payload)).toString('base64url');
+  const signingInput = `${headerBase64}.${payloadBase64}`;
+  
+  const signature = crypto.sign('SHA256', Buffer.from(signingInput), signingPrivateKey);
+  const signatureBase64 = signature.toString('base64url');
+  
+  return `${headerBase64}.${payloadBase64}.${signatureBase64}`;
+}
+
 // In-memory storage for presentation requests and responses
 const presentationRequests = new Map<string, any>();
 const presentationResponses = new Map<string, any>();
@@ -298,6 +332,16 @@ async function handleRequest(req: http.IncomingMessage, res: http.ServerResponse
         res.end(JSON.stringify(verifierMetadata, null, 2));
         return;
 
+      case '/.well-known/jwks.json': {
+        // Return the verifier's public signing key as JWKS
+        const jwks = {
+          keys: [getPublicKeyJWK()],
+        };
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(jwks, null, 2));
+        return;
+      }
+
       case '/create-request':
         if (req.method === 'POST') {
           handleCreateRequest(req, res);
@@ -400,6 +444,7 @@ const server = http.createServer(handleRequest);
 server.listen(PORT, () => {
   console.log(`Full Flow Mock Verifier running on ${VERIFIER_ID}`);
   console.log(`  /.well-known/openid4vp-verifier - Verifier metadata`);
+  console.log(`  /.well-known/jwks.json - JWKS (signing public keys)`);
   console.log(`  /create-request - Create verification request (POST)`);
   console.log(`  /request/:id - Get authorization request`);
   console.log(`  /response/:id - Receive direct_post response (POST)`);
