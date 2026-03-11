@@ -6,6 +6,9 @@ FROM node:22-bullseye-slim AS builder-base
 
 RUN apt-get update -y && apt-get install -y git fontconfig && rm -rf /var/lib/apt/lists/*
 
+# Force git to use HTTPS instead of SSH for GitHub (no SSH keys in Docker build)
+RUN git config --global url."https://github.com/".insteadOf "ssh://git@github.com/"
+
 WORKDIR /home/node/app
 
 # Install dependencies first so rebuild of these layers is only needed when dependencies change
